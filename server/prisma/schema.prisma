@@ -1,0 +1,348 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id            String         @id @default(uuid())
+  name          String
+  slug          String         @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  apiKeys       ApiKey[]
+  auditLogs     AuditLog[]
+  company       Company?
+  documents     Document[]
+  favorites     Favorite[]
+  folders       Folder[]
+  invites       Invite[]
+  notifications Notification[]
+  roles         Role[]
+  sharedLinks   SharedLink[]
+  teamMembers   TeamMember[]
+  quota         TenantQuota?
+  settings      TenantSetting?
+  users         User[]
+  workflows     Workflow[]
+}
+
+model GlobalIpRule {
+  id          String     @id @default(uuid())
+  type        IpRuleType
+  ipCidr      String
+  description String?
+  reason      String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([type, ipCidr])
+  @@index([type, createdAt])
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  tenantId  String   @unique
+  legalName String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model User {
+  id                  String               @id @default(uuid())
+  tenantId            String
+  roleId              String
+  fullName            String
+  email               String
+  phone               String?
+  passwordHash        String
+  status              UserStatus           @default(ACTIVE)
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  auditEntries        AuditLog[]           @relation("audit_actor")
+  documents           Document[]           @relation("document_owner")
+  favorites           Favorite[]
+  notifications       Notification[]       @relation("notification_user")
+  passwordResetTokens PasswordResetToken[]
+  refreshTokens       RefreshToken[]
+  role                Role                 @relation(fields: [roleId], references: [id])
+  tenant              Tenant               @relation(fields: [tenantId], references: [id])
+  profileSecurity     UserSecurity?
+
+  @@unique([tenantId, email])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  tenantId    String
+  name        String
+  code        String
+  isSystem    Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  tenant      Tenant           @relation(fields: [tenantId], references: [id])
+  permissions RolePermission[]
+  users       User[]
+
+  @@unique([tenantId, code])
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  name        String
+  createdAt   DateTime         @default(now())
+  permissions RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  role         Role       @relation(fields: [roleId], references: [id])
+
+  @@id([roleId, permissionId])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  tenantId    String?
+  actorUserId String?
+  action      String
+  entity      String
+  entityId    String?
+  metadata    String?
+  createdAt   DateTime @default(now())
+  actor       User?    @relation("audit_actor", fields: [actorUserId], references: [id])
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  tenantId   String
+  name       String
+  keyHash    String
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+}
+
+model Document {
+  id          String       @id @default(uuid())
+  tenantId    String
+  ownerUserId String
+  name        String
+  storageKey  String
+  sizeBytes   BigInt
+  mimeType    String
+  scanStatus  ScanStatus   @default(PENDING)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  folderId    String?
+  folder      Folder?      @relation(fields: [folderId], references: [id])
+  owner       User         @relation("document_owner", fields: [ownerUserId], references: [id])
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  favorites   Favorite[]
+  sharedLinks SharedLink[]
+
+  @@index([tenantId, folderId])
+}
+
+model Folder {
+  id          String     @id @default(uuid())
+  tenantId    String
+  name        String
+  parentId    String?
+  createdById String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  documents   Document[]
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, parentId])
+}
+
+model SharedLink {
+  id            String    @id @default(uuid())
+  tenantId      String
+  documentId    String
+  token         String    @unique
+  expiresAt     DateTime?
+  allowDownload Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  document      Document  @relation(fields: [documentId], references: [id])
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+}
+
+model Workflow {
+  id         String   @id @default(uuid())
+  tenantId   String
+  name       String
+  definition String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  tenantId  String
+  userId    String
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  user      User      @relation("notification_user", fields: [userId], references: [id])
+}
+
+model Favorite {
+  id         String   @id @default(uuid())
+  tenantId   String
+  userId     String
+  documentId String
+  createdAt  DateTime @default(now())
+  document   Document @relation(fields: [documentId], references: [id])
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, documentId])
+}
+
+model Invite {
+  id         String    @id @default(uuid())
+  tenantId   String
+  email      String
+  roleId     String
+  token      String    @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, email])
+  @@index([tenantId, token])
+  @@index([email, token])
+}
+
+model TeamMember {
+  id          String   @id @default(uuid())
+  tenantId    String
+  userId      String
+  invitedById String
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, userId])
+}
+
+model TenantSetting {
+  id                String   @id @default(uuid())
+  tenantId          String   @unique
+  timezone          String   @default("UTC")
+  twoFactorRequired Boolean  @default(false)
+  retentionDays     Int      @default(365)
+  // Security settings
+  passwordExpiryDays Int    @default(90)
+  sessionTimeoutMin Int     @default(60)
+  ipWhitelistEnabled Boolean @default(false)
+  failedLoginLockout Boolean @default(true)
+  maxFailedAttempts Int      @default(5)
+  // Backup settings
+  autoBackupEnabled Boolean  @default(true)
+  backupFrequency   String   @default("daily")
+  backupRetentionDays Int    @default(30)
+  backupEncryption  Boolean  @default(true)
+  // Feature flags
+  documentSharingEnabled Boolean @default(true)
+  externalLinksEnabled Boolean @default(true)
+  versionHistoryEnabled Boolean @default(true)
+  ocrEnabled        Boolean  @default(true)
+  workflowsEnabled  Boolean  @default(true)
+  analyticsEnabled  Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model UserSecurity {
+  id                     String    @id @default(uuid())
+  userId                 String    @unique
+  twoFactorEnabled       Boolean   @default(false)
+  twoFactorSecret        String?
+  twoFactorPendingSecret String?
+  recoveryCodesHash      String?
+  passwordChangedAt      DateTime?
+  sessionTimeoutMinutes  Int       @default(30)
+  loginNotifications     Boolean   @default(true)
+  emailNotifications     Boolean   @default(true)
+  pushNotifications      Boolean   @default(true)
+  documentExpiryAlerts   Boolean   @default(true)
+  workflowUpdates        Boolean   @default(true)
+  weeklyDigest           Boolean   @default(false)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  user                   User      @relation(fields: [userId], references: [id])
+}
+
+model TenantQuota {
+  id             String   @id @default(uuid())
+  tenantId       String   @unique
+  storageLimitMb Int      @default(10240)
+  storageUsedMb  Int      @default(0)
+  updatedAt      DateTime @updatedAt
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  QUARANTINED
+  FAILED
+}
+
+enum IpRuleType {
+  BLOCK
+  WHITELIST
+}

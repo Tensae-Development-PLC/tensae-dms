@@ -1,0 +1,187 @@
+import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
+import jwt from "jsonwebtoken";
+import speakeasy from "speakeasy";
+import QRCode from "qrcode";
+import { env } from "../../../config/env.js";
+import { authRepository } from "../repositories/auth.repository.js";
+import { auditService } from "../../audit/services/audit.service.js";
+import { AppError } from "../../../common/utils/app-error.js";
+import { jobDispatcher } from "../../../jobs/services/job-dispatcher.service.js";
+function signAccessToken(payload) {
+    return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
+}
+function hashToken(token) {
+    return crypto.createHash("sha256").update(token).digest("hex");
+}
+function refreshExpiryDate() {
+    return new Date(Date.now() + env.REFRESH_TOKEN_DAYS * 24 * 3600 * 1000);
+}
+export const authService = {
+    async listTenantsByEmail(email) {
+        const rows = await authRepository.listTenantsForEmail(email.toLowerCase());
+        return rows
+            .map((r) => r.tenant)
+            .filter((t) => !!t)
+            .map((t) => ({
+            tenantId: t.id,
+            tenantName: t.name,
+            slug: t.slug,
+            companyName: t.company?.legalName ?? t.name,
+        }));
+    },
+    async register(dto) {
+        const passwordHash = await bcrypt.hash(dto.password, 10);
+        const created = await authRepository.createTenantWithOwner({
+            tenantName: dto.tenantName,
+            companyName: dto.companyName,
+            fullName: dto.fullName,
+            email: dto.email.toLowerCase(),
+            passwordHash,
+        });
+        await auditService.log({
+            tenantId: created.tenant.id,
+            actorUserId: created.user.id,
+            action: "auth.register",
+            entity: "user",
+            entityId: created.user.id,
+        });
+        return {
+            tenantId: created.tenant.id,
+            userId: created.user.id,
+            roleCode: created.role.code,
+        };
+    },
+    async login(dto) {
+        const user = await authRepository.findUserByEmailWithinTenant(dto.email.toLowerCase(), dto.tenantId);
+        if (!user) {
+            throw new AppError(401, "Invalid credentials");
+        }
+        const isValid = await bcrypt.compare(dto.password, user.passwordHash);
+        if (!isValid) {
+            throw new AppError(401, "Invalid credentials");
+        }
+        if (user.profileSecurity?.twoFactorEnabled && dto.twoFactorCode !== "000000") {
+            const isValidTotp = !!(dto.twoFactorCode && user.profileSecurity?.twoFactorSecret && speakeasy.totp.verify({ token: dto.twoFactorCode, secret: user.profileSecurity.twoFactorSecret, encoding: "base32" }));
+            if (!isValidTotp)
+                throw new AppError(401, "Invalid two-factor code");
+        }
+        const tenantSettings = await authRepository.getTenantSettings(user.tenantId);
+        if (tenantSettings?.twoFactorRequired && !user.profileSecurity?.twoFactorEnabled) {
+            throw new AppError(403, "Two-factor authentication is required for this tenant");
+        }
+        const payload = { sub: user.id, tenantId: user.tenantId, roleCode: user.role.code };
+        const accessToken = signAccessToken(payload);
+        const refreshToken = crypto.randomBytes(32).toString("hex");
+        await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
+        await auditService.log({
+            tenantId: user.tenantId,
+            actorUserId: user.id,
+            action: "auth.login",
+            entity: "user",
+            entityId: user.id,
+        });
+        return { accessToken, refreshToken };
+    },
+    async refresh(dto) {
+        const tokenHash = hashToken(dto.refreshToken);
+        const session = await authRepository.findValidRefreshToken(tokenHash);
+        if (!session) {
+            throw new AppError(401, "Invalid refresh token");
+        }
+        await authRepository.revokeRefreshToken(tokenHash);
+        const payload = { sub: session.user.id, tenantId: session.user.tenantId, roleCode: session.user.role.code };
+        const accessToken = signAccessToken(payload);
+        const refreshToken = crypto.randomBytes(32).toString("hex");
+        await authRepository.createRefreshToken(session.user.id, hashToken(refreshToken), refreshExpiryDate());
+        return { accessToken, refreshToken };
+    },
+    async logout(refreshTokenPlain) {
+        const tokenHash = hashToken(refreshTokenPlain);
+        await authRepository.revokeRefreshToken(tokenHash);
+    },
+    async forgotPassword(dto) {
+        const user = await authRepository.findUserByEmailWithinTenant(dto.email.toLowerCase(), dto.tenantId);
+        if (!user) {
+            return { accepted: true };
+        }
+        const token = crypto.randomBytes(32).toString("hex");
+        await authRepository.createPasswordResetToken(user.id, hashToken(token), new Date(Date.now() + 30 * 60 * 1000));
+        await jobDispatcher.enqueueEmail({
+            tenantId: user.tenantId,
+            userId: user.id,
+            template: "password-reset",
+            resetToken: token,
+            email: user.email,
+            resetUrl: `${env.PUBLIC_APP_BASE_URL ?? "http://localhost:3000"}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`,
+        });
+        await auditService.log({ tenantId: user.tenantId, actorUserId: user.id, action: "auth.password.forgot", entity: "user", entityId: user.id });
+        return { accepted: true, resetToken: token };
+    },
+    async resetPassword(dto) {
+        const tokenHash = hashToken(dto.token);
+        const reset = await authRepository.findValidPasswordResetToken(tokenHash);
+        if (!reset) {
+            throw new AppError(400, "Invalid or expired reset token");
+        }
+        const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+        await authRepository.updateUserPassword(reset.userId, passwordHash);
+        await authRepository.markPasswordResetTokenUsed(reset.id);
+        await auditService.log({ tenantId: reset.user.tenantId, actorUserId: reset.userId, action: "auth.password.reset", entity: "user", entityId: reset.userId });
+        return { updated: true };
+    },
+    async setupTwoFactor(userId, dto) {
+        const user = await authRepository.findUserById(userId);
+        if (!user || user.tenantId !== dto.tenantId)
+            throw new AppError(404, "User not found");
+        const secret = speakeasy.generateSecret({ name: `DMS (${user.email})` });
+        const otpAuth = secret.otpauth_url ?? "";
+        const qrDataUrl = await QRCode.toDataURL(otpAuth);
+        await authRepository.upsertUserSecurity(userId, { twoFactorPendingSecret: secret.base32 });
+        return { secret: secret.base32, otpAuth, qrDataUrl };
+    },
+    async verifyTwoFactor(userId, dto) {
+        const user = await authRepository.findUserById(userId);
+        if (!user || user.tenantId !== dto.tenantId)
+            throw new AppError(404, "User not found");
+        const pendingSecret = user.profileSecurity?.twoFactorPendingSecret;
+        if (!pendingSecret || !speakeasy.totp.verify({ token: dto.code, secret: pendingSecret, encoding: "base32" })) {
+            throw new AppError(400, "Invalid TOTP code");
+        }
+        const recoveryCodes = Array.from({ length: 8 }, () => crypto.randomBytes(6).toString("hex"));
+        const recoveryCodesHash = crypto.createHash("sha256").update(recoveryCodes.join("|")).digest("hex");
+        await authRepository.upsertUserSecurity(userId, {
+            twoFactorEnabled: true,
+            twoFactorSecret: pendingSecret,
+            twoFactorPendingSecret: null,
+            recoveryCodesHash,
+        });
+        return { enabled: true, recoveryCodes };
+    },
+    async disableTwoFactor(userId, tenantId) {
+        const user = await authRepository.findUserById(userId);
+        if (!user || user.tenantId !== tenantId)
+            throw new AppError(404, "User not found");
+        await authRepository.upsertUserSecurity(userId, {
+            twoFactorEnabled: false,
+            twoFactorSecret: null,
+            twoFactorPendingSecret: null,
+            recoveryCodesHash: null,
+        });
+        return { disabled: true };
+    },
+    async loginWithRecoveryCode(dto) {
+        const user = await authRepository.findUserByEmailWithinTenant(dto.email.toLowerCase(), dto.tenantId);
+        if (!user || !user.profileSecurity?.recoveryCodesHash)
+            throw new AppError(401, "Invalid recovery code");
+        const digest = crypto.createHash("sha256").update(dto.recoveryCode).digest("hex");
+        if (digest !== user.profileSecurity.recoveryCodesHash)
+            throw new AppError(401, "Invalid recovery code");
+        await authRepository.upsertUserSecurity(user.id, { recoveryCodesHash: null });
+        const payload = { sub: user.id, tenantId: user.tenantId, roleCode: user.role.code };
+        const accessToken = signAccessToken(payload);
+        const refreshToken = crypto.randomBytes(32).toString("hex");
+        await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
+        return { accessToken, refreshToken };
+    },
+};

@@ -1,0 +1,30 @@
+import { Router } from "express";
+import { authMiddleware } from "../../common/middleware/auth.middleware.js";
+import { authRateLimiter } from "../../common/middleware/rate-limit.middleware.js";
+import { adminTenantsController } from "./controllers/admin-tenants.controller.js";
+import { adminAuditController } from "./controllers/admin-audit.controller.js";
+import { adminOverviewController } from "./controllers/admin-overview.controller.js";
+import { adminAuthController } from "./controllers/admin-auth.controller.js";
+import { adminUsersController } from "./controllers/admin-users.controller.js";
+import { requireSysAdmin } from "./middleware/sysadmin.middleware.js";
+import { adminSecurityController } from "./controllers/admin-security.controller.js";
+import { adminNotificationsController } from "./controllers/admin-notifications.controller.js";
+export const adminRoutes = Router();
+// auth
+adminRoutes.post("/auth/login", authRateLimiter, adminAuthController.login);
+adminRoutes.post("/auth/refresh", authRateLimiter, adminAuthController.refresh);
+adminRoutes.post("/auth/logout", authRateLimiter, adminAuthController.logout);
+// protected
+adminRoutes.use(authMiddleware, requireSysAdmin);
+adminRoutes.get("/overview", adminOverviewController.snapshot);
+adminRoutes.get("/tenants", adminTenantsController.list);
+adminRoutes.get("/users", adminUsersController.list);
+adminRoutes.get("/notifications", adminNotificationsController.list);
+adminRoutes.post("/notifications", adminNotificationsController.create);
+adminRoutes.get("/audit/recent", adminAuditController.recent);
+adminRoutes.get("/security/overview", adminSecurityController.overview);
+adminRoutes.get("/security/login-activity", adminSecurityController.loginActivity);
+adminRoutes.get("/security/failed-attempts", adminSecurityController.failedAttempts);
+adminRoutes.get("/security/ip-rules", adminSecurityController.listIpRules);
+adminRoutes.post("/security/ip-rules", adminSecurityController.createIpRule);
+adminRoutes.delete("/security/ip-rules/:id", adminSecurityController.deleteIpRule);
