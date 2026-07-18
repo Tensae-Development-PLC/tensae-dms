@@ -4,7 +4,7 @@ import { redisConnection } from "../queues/connection.js";
 import { queues } from "../queues/queue-registry.js";
 import { sendMail } from "../../common/email/mailer.js";
 import { inviteEmailTemplate, passwordResetTemplate } from "../../common/email/templates.js";
-import { env } from "../../config/env.js";
+import { publicAppBaseUrl } from "../../common/utils/public-urls.js";
 
 type JobHandler = (job: Job) => Promise<void>;
 
@@ -28,7 +28,7 @@ const workers = [
     if (template === "password-reset") {
       const resetToken = String(job.data?.resetToken ?? "");
       const email = String(job.data?.email ?? "");
-      const resetBase = env.PUBLIC_APP_BASE_URL ?? "http://localhost:3000";
+      const resetBase = publicAppBaseUrl();
       const resetUrl = `${resetBase}/reset-password?token=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(email)}`;
       const mail = passwordResetTemplate({ appName: "DMS", resetUrl });
       await sendMail({ to: email, ...mail });
@@ -40,7 +40,7 @@ const workers = [
       const companyName = String(job.data?.companyName ?? "your workspace");
       const role = String(job.data?.role ?? "Member");
       const invitedBy = String(job.data?.invitedBy ?? "A team admin");
-      const inviteUrl = String(job.data?.inviteUrl ?? `${env.PUBLIC_APP_BASE_URL ?? "http://localhost:3000"}/invite/accept`);
+      const inviteUrl = String(job.data?.inviteUrl ?? `${publicAppBaseUrl()}/invite/accept`);
       const department = typeof job.data?.department === "string" ? job.data.department : undefined;
       const expiryDate = typeof job.data?.expiryDate === "string" ? job.data.expiryDate : undefined;
       const mail = inviteEmailTemplate({ companyName, role, invitedBy, inviteUrl, department, expiryDate });

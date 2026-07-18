@@ -8,6 +8,10 @@ import { fileAccessMiddleware } from "../../common/middleware/file-access.middle
 import { clientController } from "./controllers/client.controller.js";
 import { clientProfileController } from "./controllers/client-profile.controller.js";
 
+/** Roles that can mutate documents / folders in V1 (viewers and custom read-only roles stay out). */
+const DOC_WRITE_ROLES = ["TENANT_OWNER", "ADMIN", "MANAGER", "STAFF"];
+const ADMIN_ROLES = ["TENANT_OWNER", "ADMIN"];
+
 export const clientRoutes = Router();
 
 clientRoutes.get(
@@ -17,39 +21,46 @@ clientRoutes.get(
   clientController.streamDownload,
 );
 
+// Public shared-link resolve / view / download (no auth)
+clientRoutes.get("/shared/:token", clientController.resolveSharedLink);
+clientRoutes.get("/shared/:token/view", clientController.viewSharedLink);
+clientRoutes.get("/shared/:token/download", clientController.downloadSharedLink);
+
 clientRoutes.use(authMiddleware, tenantBoundaryMiddleware);
 clientRoutes.get("/profile", clientProfileController.getProfile);
 clientRoutes.patch("/profile", clientProfileController.updateProfile);
 clientRoutes.patch("/profile/password", clientProfileController.updatePassword);
 clientRoutes.patch("/profile/preferences", clientProfileController.updatePreferences);
-clientRoutes.post("/folders", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.createFolder);
+clientRoutes.post("/folders", requireRole(DOC_WRITE_ROLES), clientController.createFolder);
 clientRoutes.get("/folders", clientController.listFolders);
-clientRoutes.post("/documents", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.createDocument);
-clientRoutes.post("/documents/upload", requireRole(["TENANT_OWNER", "ADMIN"]), uploadDocumentMiddleware.single("file"), clientController.uploadDocument);
+clientRoutes.post("/documents", requireRole(DOC_WRITE_ROLES), clientController.createDocument);
+clientRoutes.post("/documents/upload", requireRole(DOC_WRITE_ROLES), uploadDocumentMiddleware.single("file"), clientController.uploadDocument);
 clientRoutes.post("/documents/:documentId/signed-url", clientController.signedDownloadUrl);
+clientRoutes.patch("/documents/:documentId", requireRole(DOC_WRITE_ROLES), clientController.renameDocument);
+clientRoutes.delete("/documents/:documentId", requireRole(DOC_WRITE_ROLES), clientController.deleteDocument);
 clientRoutes.get("/documents", clientController.listDocuments);
-clientRoutes.post("/documents/share", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.shareDocument);
+clientRoutes.post("/documents/share", requireRole(DOC_WRITE_ROLES), clientController.shareDocument);
 clientRoutes.get("/shared-links", clientController.listSharedLinks);
 clientRoutes.post("/documents/:documentId/favorite", clientController.favoriteDocument);
 clientRoutes.get("/favorites", clientController.listFavorites);
-clientRoutes.post("/workflows", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.createWorkflow);
+clientRoutes.post("/workflows", requireRole(ADMIN_ROLES), clientController.createWorkflow);
 clientRoutes.get("/workflows", clientController.listWorkflows);
-clientRoutes.post("/notifications", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.createNotification);
+clientRoutes.post("/notifications", requireRole(ADMIN_ROLES), clientController.createNotification);
 clientRoutes.get("/notifications", clientController.listNotifications);
-clientRoutes.post("/team/invite", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.inviteMember);
-clientRoutes.post("/team/invite-email", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.inviteMemberByEmail);
+clientRoutes.post("/team/invite", requireRole(ADMIN_ROLES), clientController.inviteMember);
+clientRoutes.post("/team/invite-email", requireRole(ADMIN_ROLES), clientController.inviteMemberByEmail);
 clientRoutes.get("/team", clientController.listTeam);
 clientRoutes.get("/roles", clientController.listRoles);
 clientRoutes.get("/roles/:roleId", clientController.getRoleById);
-clientRoutes.post("/roles", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.createRole);
-clientRoutes.patch("/roles/:roleId", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.updateRole);
-clientRoutes.delete("/roles/:roleId", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.deleteRole);
-clientRoutes.post("/roles/:roleId/duplicate", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.duplicateRole);
-clientRoutes.patch("/settings", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.updateSettings);
+clientRoutes.post("/roles", requireRole(ADMIN_ROLES), clientController.createRole);
+clientRoutes.patch("/roles/:roleId", requireRole(ADMIN_ROLES), clientController.updateRole);
+clientRoutes.delete("/roles/:roleId", requireRole(ADMIN_ROLES), clientController.deleteRole);
+clientRoutes.post("/roles/:roleId/duplicate", requireRole(ADMIN_ROLES), clientController.duplicateRole);
+clientRoutes.patch("/settings", requireRole(ADMIN_ROLES), clientController.updateSettings);
 clientRoutes.get("/settings", clientController.getSettings);
-clientRoutes.post("/api-keys", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.createApiKey);
-clientRoutes.get("/api-keys", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.listApiKeys);
-clientRoutes.delete("/api-keys/:apiKeyId", requireRole(["TENANT_OWNER", "ADMIN"]), clientController.deleteApiKey);
+clientRoutes.post("/api-keys", requireRole(ADMIN_ROLES), clientController.createApiKey);
+clientRoutes.get("/api-keys", requireRole(ADMIN_ROLES), clientController.listApiKeys);
+clientRoutes.delete("/api-keys/:apiKeyId", requireRole(ADMIN_ROLES), clientController.deleteApiKey);
 clientRoutes.patch("/profile/security", clientController.updateProfileSecurity);
 clientRoutes.get("/reports/tenant", clientController.tenantReport);
 clientRoutes.get("/activity", clientController.recentActivity);

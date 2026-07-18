@@ -15,7 +15,10 @@ const envSchema = z
     SMTP_USER: z.string().email().optional(),
     SMTP_PASS: z.string().min(1).optional(),
     SMTP_FROM: z.string().min(1).optional(),
+    /** Browser-facing app origin (invite/reset/share links). e.g. http://localhost:3000 or http://YOUR_VPS_IP */
     PUBLIC_APP_BASE_URL: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.string().url().optional()),
+    /** Public API origin without path (signed download URLs). e.g. http://localhost:4000 or http://YOUR_VPS_IP */
+    PUBLIC_API_BASE_URL: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.string().url().optional()),
     /** Comma-separated list of allowed browser origins (e.g. https://app.example.com,http://localhost:3000) */
     CORS_ORIGIN: z.string().default("http://localhost:3000"),
     REDIS_URL: z.string().default("redis://127.0.0.1:6379"),
@@ -23,8 +26,11 @@ const envSchema = z
     GLOBAL_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(500),
     GLOBAL_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
     SLOW_QUERY_THRESHOLD_MS: z.coerce.number().int().positive().default(300),
+    /** Local VPS disk only — S3 is not supported */
     STORAGE_DRIVER: z.enum(["local"]).default("local"),
     STORAGE_LOCAL_ROOT: z.string().default("./storage-data"),
+    /** When false, subscriptions/billing UI is disabled (free tier). Default off for V1. */
+    BILLING_ENABLED: z.coerce.boolean().default(false),
     REFRESH_COOKIE_NAME: z.string().min(1).default("dms_refresh"),
     ADMIN_REFRESH_COOKIE_NAME: z.string().min(1).default("dms_admin_refresh"),
     /** Defaults to true when NODE_ENV is production */

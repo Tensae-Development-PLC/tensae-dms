@@ -5,6 +5,7 @@ import { Menu, Search, Bell, User, ChevronDown, LogOut, Settings } from 'lucide-
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { getProfile } from '@/lib/client-api'
+import { logout } from '@/lib/auth'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 interface DashboardHeaderProps {
   onMenuClick: () => void
@@ -26,6 +28,7 @@ const notifications = [
 ]
 
 export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
+  const router = useRouter()
   const [showNotifications, setShowNotifications] = useState(false)
   const [profile, setProfile] = useState<{ fullName?: string; email?: string } | null>(null)
 
@@ -141,11 +144,15 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/" className="flex items-center gap-2 text-destructive cursor-pointer">
-                  <LogOut className="w-4 h-4" />
-                  Log out
-                </Link>
+              <DropdownMenuItem
+                className="flex items-center gap-2 text-destructive cursor-pointer"
+                onClick={async () => {
+                  await logout()
+                  router.push('/login')
+                }}
+              >
+                <LogOut className="w-4 h-4" />
+                Log out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

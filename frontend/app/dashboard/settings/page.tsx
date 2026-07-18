@@ -10,15 +10,13 @@ import {
   Key,
   Bell,
   Save,
-  Settings,
-  Smartphone,
-  Monitor,
-  Laptop,
-  LogOut,
-  AlertTriangle,
   Plus,
   ChevronRight,
   Loader2,
+  Trash2,
+  Copy,
+  Check,
+  Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,9 +27,17 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { InviteUserDialog } from '@/components/dashboard/invite-user-dialog'
-import { TwoFactorSetup } from '@/components/dashboard/two-factor-setup'
-import { SecurityAlerts } from '@/components/dashboard/security-alerts'
-import { getProfile, listRoles, listTeamMembers, updatePassword, updatePreferences, updateProfile } from '@/lib/client-api'
+import {
+  createApiKey,
+  deleteApiKey,
+  getProfile,
+  listApiKeys,
+  listRoles,
+  listTeamMembers,
+  updatePassword,
+  updatePreferences,
+  updateProfile,
+} from '@/lib/client-api'
 import { useToast } from '@/hooks/use-toast'
 
 type TeamRow = {
@@ -61,25 +67,18 @@ type RoleRow = {
   _count: { users: number }
 }
 
-const devices = [
-  { id: 1, name: 'MacBook Pro', type: 'laptop', browser: 'Chrome', ip: 'Current session', lastActive: 'Now', current: true },
-]
-
-const getDeviceIcon = (type: string) => {
-  switch (type) {
-    case 'mobile':
-      return Smartphone
-    case 'desktop':
-      return Monitor
-    default:
-      return Laptop
-  }
+type ApiKeyRow = {
+  id: string
+  name: string
+  keyHash: string
+  lastUsedAt: string | null
+  expiresAt: string | null
+  createdAt: string
 }
 
 export default function SettingsPage() {
   const { toast } = useToast()
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
-  const [twoFactorOpen, setTwoFactorOpen] = useState(false)
   const [loadingPage, setLoadingPage] = useState(true)
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingPreferences, setSavingPreferences] = useState(false)
@@ -91,12 +90,15 @@ export default function SettingsPage() {
     email: '',
     phone: '',
   })
+  const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([])
+  const [newKeyName, setNewKeyName] = useState('')
+  const [createdRawKey, setCreatedRawKey] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState(false)
 
   const [teamMembers, setTeamMembers] = useState<TeamRow[]>([])
   const [roles, setRoles] = useState<RoleRow[]>([])
 
   const [security, setSecurity] = useState({
-    twoFactor: false,
     sessionTimeout: '30',
     loginNotifications: true,
   })
@@ -128,10 +130,11 @@ export default function SettingsPage() {
     ;(async () => {
       setLoadingPage(true)
       try {
-        const [userProfile, team, roleList] = await Promise.all([
+        const [userProfile, team, roleList, keys] = await Promise.all([
           getProfile(),
           listTeamMembers(),
           listRoles(),
+          listApiKeys().catch(() => [] as ApiKeyRow[]),
         ])
 
         if (!mounted) return
@@ -143,9 +146,9 @@ export default function SettingsPage() {
           email: userProfile.email,
           phone: userProfile.phone || '',
         })
+        setApiKeys(keys as ApiKeyRow[])
 
         setSecurity({
-          twoFactor: userProfile.twoFactorEnabled,
           sessionTimeout: String(userProfile.preferences?.sessionTimeoutMinutes ?? 30),
           loginNotifications: userProfile.preferences?.loginNotifications ?? true,
         })
@@ -281,9 +284,9 @@ export default function SettingsPage() {
             <Bell className="w-4 h-4" />
             <span className="hidden sm:inline">Notifications</span>
           </TabsTrigger>
-          <TabsTrigger value="devices" className="gap-2">
-            <Laptop className="w-4 h-4" />
-            <span className="hidden sm:inline">Devices</span>
+          <TabsTrigger value="api-keys" className="gap-2">
+            <Key className="w-4 h-4" />
+            <span className="hidden sm:inline">API Keys</span>
           </TabsTrigger>
         </TabsList>
 
@@ -341,31 +344,6 @@ export default function SettingsPage() {
 
         <TabsContent value="security">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Two-Factor Authentication</CardTitle>
-                <CardDescription>Add an extra layer of security to your account</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-accent/10 flex items-center justify-center">
-                      <Shield className="w-6 h-6 text-accent" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">Two-Factor Authentication</p>
-                      <p className="text-sm text-muted-foreground">
-                        {security.twoFactor ? 'Enabled - Your account is protected' : 'Not enabled - Add extra security'}
-                      </p>
-                    </div>
-                  </div>
-                  <Button variant={security.twoFactor ? 'outline' : 'default'} onClick={() => setTwoFactorOpen(true)}>
-                    {security.twoFactor ? 'Manage' : 'Enable'}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
             <Card>
               <CardHeader>
                 <CardTitle>Password</CardTitle>
@@ -440,8 +418,6 @@ export default function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
-
-            <SecurityAlerts />
           </motion.div>
         </TabsContent>
 
@@ -600,68 +576,88 @@ export default function SettingsPage() {
           </motion.div>
         </TabsContent>
 
-        <TabsContent value="devices">
+        <TabsContent value="api-keys">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>Active Devices</CardTitle>
-                  <CardDescription>Manage devices that are signed in to your account</CardDescription>
-                </div>
-                <Button
-                  variant="outline"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => toast({ title: 'Sessions updated', description: 'Other active sessions were requested to logout.' })}
-                >
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Logout All Others
-                </Button>
+              <CardHeader>
+                <CardTitle>API Keys</CardTitle>
+                <CardDescription>Create tenant API keys for integrations (shown once on create)</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {devices.map((device) => {
-                    const DeviceIcon = getDeviceIcon(device.type)
-                    return (
-                      <div key={device.id} className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
-                            <DeviceIcon className="w-5 h-5 text-primary" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium text-foreground">{device.name}</p>
-                              <Badge variant="default" className="text-xs bg-primary">Current</Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground">{device.browser} • {device.ip}</p>
-                          </div>
-                        </div>
-                        <span className="text-sm text-muted-foreground">{device.lastActive}</span>
-                      </div>
-                    )
-                  })}
+              <CardContent className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    placeholder="Key name (e.g. Production)"
+                    value={newKeyName}
+                    onChange={(e) => setNewKeyName(e.target.value)}
+                  />
+                  <Button
+                    onClick={async () => {
+                      if (!newKeyName.trim()) return
+                      try {
+                        const created = await createApiKey({ name: newKeyName.trim() })
+                        setCreatedRawKey(created.rawKey)
+                        setNewKeyName('')
+                        setApiKeys(await listApiKeys())
+                        toast({ title: 'API key created', description: 'Copy the key now — it will not be shown again.' })
+                      } catch (e: unknown) {
+                        const err = e as { response?: { data?: { message?: string } }; message?: string }
+                        toast({
+                          title: 'Failed',
+                          description: err?.response?.data?.message || err?.message || 'Could not create key',
+                          variant: 'destructive',
+                        })
+                      }
+                    }}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create
+                  </Button>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-yellow-500/20 bg-yellow-500/5">
-              <CardContent className="flex items-start gap-4 pt-6">
-                <div className="w-10 h-10 rounded-xl bg-yellow-500/20 flex items-center justify-center shrink-0">
-                  <AlertTriangle className="w-5 h-5 text-yellow-500" />
-                </div>
-                <div>
-                  <h4 className="font-medium text-foreground">New device detected</h4>
-                  <p className="text-sm text-muted-foreground mt-1">Review account activity under Security Alerts for detailed audit events.</p>
-                  <div className="flex gap-2 mt-3">
-                    <Button size="sm" onClick={() => toast({ title: 'Device trusted', description: 'This device has been marked as trusted for this session.' })}>Trust Device</Button>
+                {createdRawKey && (
+                  <div className="p-3 rounded-lg bg-secondary flex items-center gap-2">
+                    <code className="text-xs flex-1 break-all">{createdRawKey}</code>
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => toast({ title: 'Security action', description: 'Please change password and review security alerts.', variant: 'destructive' })}
+                      onClick={() => {
+                        void navigator.clipboard.writeText(createdRawKey)
+                        setCopiedKey(true)
+                        setTimeout(() => setCopiedKey(false), 2000)
+                      }}
                     >
-                      Secure Account
+                      {copiedKey ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                     </Button>
                   </div>
+                )}
+                <div className="space-y-2">
+                  {apiKeys.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No API keys yet.</p>
+                  ) : (
+                    apiKeys.map((key) => (
+                      <div key={key.id} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                        <div>
+                          <p className="font-medium text-foreground">{key.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Created {new Date(key.createdAt).toLocaleDateString()}
+                            {key.lastUsedAt ? ` · Last used ${new Date(key.lastUsedAt).toLocaleDateString()}` : ''}
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive"
+                          onClick={async () => {
+                            if (!confirm(`Delete API key "${key.name}"?`)) return
+                            await deleteApiKey(key.id)
+                            setApiKeys(await listApiKeys())
+                            toast({ title: 'API key deleted' })
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -670,7 +666,6 @@ export default function SettingsPage() {
       </Tabs>
 
       <InviteUserDialog open={inviteDialogOpen} onOpenChange={setInviteDialogOpen} />
-      <TwoFactorSetup open={twoFactorOpen} onOpenChange={setTwoFactorOpen} />
     </div>
   )
 }

@@ -16,6 +16,7 @@ export async function getProfile() {
     fullName: string;
     email: string;
     phone?: string | null;
+    tenantId?: string;
     tenantName?: string;
     companyName?: string;
     roleName?: string;
@@ -78,8 +79,30 @@ export async function updatePassword(body: { currentPassword: string; newPasswor
   return data;
 }
 
-export async function listDocuments() {
-  const { data } = await api.get<unknown[]>("/client/documents");
+export async function listDocuments(folderId?: string | null) {
+  const params: Record<string, string> = {};
+  if (folderId) params.folderId = folderId;
+  const { data } = await api.get<unknown[]>("/client/documents", { params });
+  return data;
+}
+
+export async function createFolder(body: { name: string; parentId?: string }) {
+  const { data } = await api.post<{
+    id: string;
+    name: string;
+    parentId?: string | null;
+    createdAt: string;
+  }>("/client/folders", body);
+  return data;
+}
+
+export async function deleteDocument(documentId: string) {
+  const { data } = await api.delete<{ deleted: boolean }>(`/client/documents/${documentId}`);
+  return data;
+}
+
+export async function renameDocument(documentId: string, name: string) {
+  const { data } = await api.patch(`/client/documents/${documentId}`, { name });
   return data;
 }
 
@@ -454,7 +477,24 @@ export async function acceptInvite(body: { token: string; email: string; fullNam
     userId: string;
     tenantId: string;
     roleId: string;
+    accessToken: string;
   }>("/auth/invites/accept", body);
+  return data;
+}
+
+export async function resolveSharedLink(token: string) {
+  const { data } = await api.get<{
+    token: string;
+    allowDownload: boolean;
+    expiresAt: string | null;
+    document: {
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: string;
+      createdAt: string;
+    };
+  }>(`/client/shared/${token}`);
   return data;
 }
 
@@ -462,23 +502,15 @@ export async function acceptInvite(body: { token: string; email: string; fullNam
 export async function uploadDocument(
   file: File,
   options?: {
-    documentType?: string;
-    entity?: string;
-    expiryDate?: string;
+    folderId?: string;
     onProgress?: (progress: number) => void;
   }
 ) {
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append("file", file);
 
-  if (options?.documentType) {
-    formData.append('documentType', options.documentType);
-  }
-  if (options?.entity) {
-    formData.append('entity', options.entity);
-  }
-  if (options?.expiryDate) {
-    formData.append('expiryDate', options.expiryDate);
+  if (options?.folderId) {
+    formData.append("folderId", options.folderId);
   }
 
   const { data } = await api.post<{

@@ -9,6 +9,7 @@ import { authRepository } from "../repositories/auth.repository.js";
 import { auditService } from "../../audit/services/audit.service.js";
 import { AppError } from "../../../common/utils/app-error.js";
 import { jobDispatcher } from "../../../jobs/services/job-dispatcher.service.js";
+import { publicAppBaseUrl } from "../../../common/utils/public-urls.js";
 
 function signAccessToken(payload: { sub: string; tenantId: string; roleCode: string }) {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
@@ -71,14 +72,7 @@ export const authService = {
       throw new AppError(401, "Invalid credentials");
     }
 
-    if (user.profileSecurity?.twoFactorEnabled && dto.twoFactorCode !== "000000") {
-      const isValidTotp = !!(dto.twoFactorCode && user.profileSecurity?.twoFactorSecret && speakeasy.totp.verify({ token: dto.twoFactorCode, secret: user.profileSecurity.twoFactorSecret, encoding: "base32" }));
-      if (!isValidTotp) throw new AppError(401, "Invalid two-factor code");
-    }
-    const tenantSettings = await authRepository.getTenantSettings(user.tenantId);
-    if (tenantSettings?.twoFactorRequired && !user.profileSecurity?.twoFactorEnabled) {
-      throw new AppError(403, "Two-factor authentication is required for this tenant");
-    }
+    // 2FA is disabled for V1 — skip totp / tenant-required checks so login stays simple.
 
     const payload = { sub: user.id, tenantId: user.tenantId, roleCode: user.role.code };
     const accessToken = signAccessToken(payload);
@@ -128,7 +122,7 @@ export const authService = {
       template: "password-reset",
       resetToken: token,
       email: user.email,
-      resetUrl: `${env.PUBLIC_APP_BASE_URL ?? "http://localhost:3000"}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`,
+      resetUrl: `${publicAppBaseUrl()}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`,
     });
     await auditService.log({ tenantId: user.tenantId, actorUserId: user.id, action: "auth.password.forgot", entity: "user", entityId: user.id });
     return { accepted: true, resetToken: token };
@@ -244,7 +238,18 @@ export const authService = {
       entityId: user.id,
     });
 
-    return { userId: user.id, tenantId: invite.tenantId, roleId: invite.roleId };
+    const payload = { sub: user.id, tenantId: invite.tenantId, roleCode: user.role.code };
+    const accessToken = signAccessToken(payload);
+    const refreshToken = crypto.randomBytes(32).toString("hex");
+    await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
+
+    return {
+      userId: user.id,
+      tenantId: invite.tenantId,
+      roleId: invite.roleId,
+      accessToken,
+      refreshToken,
+    };
   },
 };
 

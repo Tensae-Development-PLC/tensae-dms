@@ -73,13 +73,19 @@ export default function LoginPage() {
       }
 
       const finalTenantId = tenantId || found[0]!.tenantId
-      await login({ email: formData.email, password: formData.password, tenantId: finalTenantId })
+      await login({
+        email: formData.email,
+        password: formData.password,
+        tenantId: finalTenantId,
+      })
       // redirect on success
       setIsLoading(false)
       router.push('/dashboard')
-    } catch (err) {
+    } catch (err: unknown) {
       setIsLoading(false)
-      setErrors({ form: 'Login failed. Check credentials.' })
+      const e = err as { response?: { data?: { message?: string }; status?: number } }
+      const msg = e?.response?.data?.message || 'Login failed. Check credentials.'
+      setErrors({ form: msg })
     }
   }
 

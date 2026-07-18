@@ -18,6 +18,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { listSharedLinks } from '@/lib/client-api'
 
+import { buildShareUrl } from '@/lib/public-url'
+
 type SharedLinkRow = {
   id: string
   token: string
@@ -30,13 +32,6 @@ type SharedLinkRow = {
     mimeType: string
     createdAt: string
   }
-}
-
-function buildShareUrl(token: string) {
-  if (typeof window === 'undefined') {
-    return `/share/${token}`
-  }
-  return `${window.location.origin}/share/${token}`
 }
 
 export default function SharedFilesPage() {

@@ -22,7 +22,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 export default function AdminSettingsPage() {
   const [securitySettings, setSecuritySettings] = useState({
-    twoFactorRequired: true,
     passwordExpiry: '90',
     sessionTimeout: '60',
     ipWhitelist: false,
@@ -48,11 +47,25 @@ export default function AdminSettingsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div>
         <h1 className="text-2xl lg:text-3xl font-bold text-foreground">System Settings</h1>
         <p className="text-muted-foreground">Configure system-wide settings and preferences</p>
       </div>
+
+      <Card className="border-yellow-500/30 bg-yellow-500/5">
+        <CardContent className="flex items-start gap-3 pt-6">
+          <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-medium text-foreground">Not persisted in V1</p>
+            <p className="text-muted-foreground mt-1">
+              These toggles are a preview UI only. Use environment variables for deploy settings
+              (<code className="text-xs">BILLING_ENABLED</code>,{' '}
+              <code className="text-xs">PUBLIC_APP_BASE_URL</code>, storage, etc.). Prefer Security IP rules
+              and tenant Settings for live controls.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="security" className="space-y-6">
         <TabsList className="grid w-full grid-cols-3 gap-2">
@@ -86,17 +99,6 @@ export default function AdminSettingsPage() {
                 <CardDescription>Configure user authentication requirements</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-foreground">Require Two-Factor Authentication</p>
-                    <p className="text-sm text-muted-foreground">All users must enable 2FA</p>
-                  </div>
-                  <Switch
-                    checked={securitySettings.twoFactorRequired}
-                    onCheckedChange={(checked) => setSecuritySettings({ ...securitySettings, twoFactorRequired: checked })}
-                  />
-                </div>
-
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-foreground">Password Expiry</p>

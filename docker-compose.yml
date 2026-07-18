@@ -41,12 +41,15 @@ services:
       PORT: 4000
       DATABASE_URL: postgresql://postgres:postgres@db:5432/dms?schema=public
       REDIS_URL: redis://redis:6379
-      CORS_ORIGIN: http://localhost,http://127.0.0.1
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost,http://127.0.0.1}
+      STORAGE_DRIVER: local
       STORAGE_LOCAL_ROOT: /data/storage
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
       # Set real secrets via env file or Docker secrets in real deployments
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-changeme-change-me-at-least-32-chars!!}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-changeme-change-me-at-least-32-chars!!}
       SIGNED_URL_SECRET: ${SIGNED_URL_SECRET:-changeme-change-me-at-least-32-chars!!}
+      PUBLIC_APP_BASE_URL: ${PUBLIC_APP_BASE_URL:-http://localhost}
       PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost}
     volumes:
       - dms_storage:/data/storage
@@ -59,6 +62,8 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api/v1}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost}
+        NEXT_PUBLIC_BILLING_ENABLED: ${NEXT_PUBLIC_BILLING_ENABLED:-false}
     restart: unless-stopped
     depends_on:
       - api

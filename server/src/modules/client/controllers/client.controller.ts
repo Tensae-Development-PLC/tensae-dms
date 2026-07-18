@@ -18,8 +18,8 @@ import { prisma } from "../../../config/prisma.js";
 import { issueSignedDownloadToken } from "../../../security/signed-url.service.js";
 import { virusScanner } from "../../../security/virus-scanner.js";
 import { jobDispatcher } from "../../../jobs/services/job-dispatcher.service.js";
-import { env } from "../../../config/env.js";
 import { auditService } from "../../audit/services/audit.service.js";
+import { publicApiBaseUrl, publicAppBaseUrl } from "../../../common/utils/public-urls.js";
 
 const allowedMimeTypes = new Set([
   "application/pdf",
@@ -85,35 +85,25 @@ export const clientController = {
     const key = `${ctx.tenantId}/${Date.now()}-${file.originalname.replace(/\s+/g, "_")}`;
     await storageService.put(key, file.buffer);
 
-    // Create document record with metadata
-    const documentInput: any = {
+    // Create document record (metadata-only fields like type/entity/expiry are not stored in V1)
+    const documentInput: {
+      name: string;
+      mimeType: string;
+      sizeBytes: bigint;
+      storageKey: string;
+      folderId?: string;
+    } = {
       name: file.originalname,
       mimeType: file.mimetype,
       sizeBytes: BigInt(file.size),
       storageKey: key,
     };
 
-    // Add optional metadata from form fields
-    if (req.body.documentType) {
-      documentInput.documentType = req.body.documentType;
-    }
-    if (req.body.entity) {
-      documentInput.entity = req.body.entity;
-    }
-    if (req.body.expiryDate) {
-      documentInput.expiryDate = new Date(req.body.expiryDate);
+    if (req.body.folderId && typeof req.body.folderId === "string") {
+      documentInput.folderId = req.body.folderId;
     }
 
     const item = await clientService.createDocument(ctx.tenantId, ctx.userId, documentInput);
-    
-    // Enqueue expiry alert job if expiry date is set
-    if (req.body.expiryDate) {
-      await jobDispatcher.enqueueDocumentExpiryAlert({ 
-        tenantId: ctx.tenantId, 
-        documentId: item.id, 
-        checkAfterHours: 24 
-      });
-    }
 
     res.status(201).json(item);
   },
@@ -125,10 +115,23 @@ export const clientController = {
       throw new AppError(404, "Document not found");
     }
     const token = issueSignedDownloadToken({ documentId, tenantId: ctx.tenantId, userId: ctx.userId }, 10 * 60);
-    const configured = typeof env.PUBLIC_APP_BASE_URL === "string" ? env.PUBLIC_APP_BASE_URL.replace(/\/$/, "").trim() : "";
-    const base = configured || `${req.protocol}://${req.get("host")}`;
+    const base = publicApiBaseUrl(`${req.protocol}://${req.get("host")}`);
     const url = `${base}/api/v1/client/documents/${documentId}/download?token=${encodeURIComponent(token)}`;
     res.json({ url, expiresInSeconds: 600 });
+  },
+  async deleteDocument(req: Request, res: Response) {
+    const ctx = context(req);
+    const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
+    const result = await clientService.deleteDocument(ctx.tenantId, ctx.userId, documentId);
+    res.json(result);
+  },
+  async renameDocument(req: Request, res: Response) {
+    const ctx = context(req);
+    const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!name) throw new AppError(400, "name is required");
+    const result = await clientService.renameDocument(ctx.tenantId, ctx.userId, documentId, name);
+    res.json(result);
   },
   async streamDownload(req: Request, res: Response) {
     const ctx = context(req);
@@ -144,7 +147,40 @@ export const clientController = {
   },
   async listDocuments(req: Request, res: Response) {
     const { tenantId } = context(req);
-    res.json(await clientService.listDocuments(tenantId));
+    const folderId = typeof req.query.folderId === "string" ? req.query.folderId : undefined;
+    const unfiled = req.query.unfiled === "1" || req.query.unfiled === "true";
+    res.json(await clientService.listDocuments(tenantId, { folderId, unfiled }));
+  },
+  async resolveSharedLink(req: Request, res: Response) {
+    const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+    const link = await clientService.resolveSharedLink(token);
+    res.json(link);
+  },
+  async downloadSharedLink(req: Request, res: Response) {
+    const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+    const { document, allowDownload } = await clientService.getSharedLinkForDownload(token);
+    if (!allowDownload) {
+      throw new AppError(403, "Download is not allowed for this link");
+    }
+    const safeName = document.name.replace(/["\r\n]/g, "_");
+    res.setHeader("Content-Type", document.mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    const stream = await storageService.getReadStream(document.storageKey);
+    stream.pipe(res);
+  },
+  async viewSharedLink(req: Request, res: Response) {
+    const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+    const { document } = await clientService.getSharedLinkForDownload(token);
+    const safeName = document.name.replace(/["\r\n]/g, "_");
+    res.setHeader("Content-Type", document.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    // Allow embedding the preview on the public share page (different origin in dev)
+    res.removeHeader("X-Frame-Options");
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+    const stream = await storageService.getReadStream(document.storageKey);
+    stream.pipe(res);
   },
   async shareDocument(req: Request, res: Response) {
     const dto = createShareSchema.parse(req.body);
@@ -198,12 +234,35 @@ export const clientController = {
       throw new AppError(404, "Inviter not found");
     }
 
-    // Find the role by name/code
-    const role = await prisma.role.findFirst({
-      where: { tenantId: ctx.tenantId, name: dto.role },
+    // Resolve role by code or name (invite UI sends ids like "viewer", "admin")
+    const roleKey = dto.role.trim();
+    const roleKeyUpper = roleKey.toUpperCase().replace(/\s+/g, "_");
+    let role = await prisma.role.findFirst({
+      where: {
+        tenantId: ctx.tenantId,
+        OR: [
+          { code: { equals: roleKeyUpper, mode: "insensitive" } },
+          { name: { equals: roleKey, mode: "insensitive" } },
+          { code: { equals: roleKey, mode: "insensitive" } },
+        ],
+      },
     });
+
+    // Create standard invite roles on demand if the tenant only has TENANT_OWNER yet
     if (!role) {
-      throw new AppError(400, "Invalid role");
+      const displayName = roleKey
+        .split(/[_\s-]+/)
+        .filter(Boolean)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+      role = await prisma.role.create({
+        data: {
+          tenantId: ctx.tenantId,
+          name: displayName || roleKeyUpper,
+          code: roleKeyUpper,
+          isSystem: false,
+        },
+      });
     }
 
     // Generate invite token
@@ -218,7 +277,7 @@ export const clientController = {
       update: { token, expiresAt, acceptedAt: null, roleId: role.id },
     });
 
-    const appBase = env.PUBLIC_APP_BASE_URL ?? `${req.protocol}://${req.get("host")}`;
+    const appBase = publicAppBaseUrl(`${req.protocol}://${req.get("host")}`);
     const inviteUrl = `${appBase}/invite/accept?email=${encodeURIComponent(dto.email)}&token=${encodeURIComponent(token)}`;
 
     await jobDispatcher.enqueueEmail({
@@ -279,8 +338,8 @@ export const clientController = {
       throw new AppError(409, "Role with this name already exists");
     }
     
-    // Generate code from name
-    const code = name.toLowerCase().replace(/\s+/g, '_');
+    // Generate uppercase code from name (e.g. Staff → STAFF) for RBAC matching
+    const code = name.trim().toUpperCase().replace(/\s+/g, '_');
     
     // Create role
     const role = await prisma.role.create({
@@ -513,7 +572,7 @@ export const clientController = {
   },
   async deleteApiKey(req: Request, res: Response) {
     const ctx = context(req);
-    const { apiKeyId } = req.params;
+    const apiKeyId = Array.isArray(req.params.apiKeyId) ? req.params.apiKeyId[0] : req.params.apiKeyId;
     await clientService.deleteApiKey(ctx.tenantId, ctx.userId, apiKeyId);
     res.status(204).send();
   },

@@ -57,6 +57,7 @@ export const clientProfileController = {
       fullName: user.fullName,
       email: user.email,
       phone: user.phone,
+      tenantId: user.tenantId,
       tenantName: user.tenant?.name,
       companyName: user.tenant?.company?.legalName,
       roleName: user.role?.name,

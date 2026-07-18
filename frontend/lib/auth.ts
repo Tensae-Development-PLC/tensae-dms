@@ -16,18 +16,15 @@ export async function login({
   email,
   password,
   tenantId,
-  twoFactorCode,
 }: {
   email: string;
   password: string;
   tenantId: string;
-  twoFactorCode?: string;
 }) {
   const resp = await api.post("/auth/login", {
     email,
     password,
     tenantId,
-    twoFactorCode,
   });
   const { accessToken } = resp.data as { accessToken: string };
   setTokens(accessToken);
@@ -63,6 +60,11 @@ export async function adminLogin(dto: { email: string; password: string }) {
 }
 
 export async function logout() {
+  try {
+    await api.post("/auth/logout");
+  } catch {
+    // still clear local tokens
+  }
   await clearTokens();
 }
 

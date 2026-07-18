@@ -10,8 +10,8 @@ export default function AuthLayout({
 }) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden bg-background">
-      {/* Background Effects */}
-      <div className="absolute inset-0">
+      {/* Background Effects — decorative only; must not block form inputs */}
+      <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-pulse" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-accent/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
         
@@ -39,7 +39,7 @@ export default function AuthLayout({
       </div>
 
       {/* Content */}
-      <div className="relative z-10 w-full max-w-md px-4">
+      <div className="relative z-10 w-full max-w-md px-4 pointer-events-auto">
         {children}
       </div>
 

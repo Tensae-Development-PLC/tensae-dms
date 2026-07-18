@@ -93,6 +93,12 @@ export const authController = {
   async acceptInvite(req: Request, res: Response) {
     const dto = acceptInviteSchema.parse(req.body);
     const result = await authService.acceptInvite(dto);
-    res.status(201).json(result);
+    res.cookie(env.REFRESH_COOKIE_NAME, result.refreshToken, tenantRefreshCookieOptions());
+    res.status(201).json({
+      userId: result.userId,
+      tenantId: result.tenantId,
+      roleId: result.roleId,
+      accessToken: result.accessToken,
+    });
   },
 };

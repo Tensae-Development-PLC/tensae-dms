@@ -8,14 +8,13 @@ import {
   Grid3X3,
   List,
   Search,
-  Filter,
-  SortAsc,
   Plus,
   MoreHorizontal,
-  Eye,
   Download,
   Star,
   Share2,
+  Trash2,
+  FolderPlus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,9 +26,26 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
 import Link from 'next/link'
-import { getSignedDownloadUrl, listDocuments, listFolders, shareDocument, toggleFavorite } from '@/lib/client-api'
+import {
+  createFolder,
+  deleteDocument,
+  getSignedDownloadUrl,
+  listDocuments,
+  listFolders,
+  shareDocument,
+  toggleFavorite,
+} from '@/lib/client-api'
 import { formatBytes } from '@/lib/format'
+import { useToast } from '@/hooks/use-toast'
 
 type ApiDoc = {
   id: string
@@ -38,6 +54,7 @@ type ApiDoc = {
   sizeBytes: string | bigint
   createdAt: string
   scanStatus?: string
+  folderId?: string | null
   owner?: { fullName?: string; email?: string }
 }
 
@@ -54,16 +71,24 @@ function mimeLabel(mime: string) {
 }
 
 export default function DocumentsPage() {
+  const { toast } = useToast()
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
   const [searchQuery, setSearchQuery] = useState('')
   const [items, setItems] = useState<ApiDoc[]>([])
   const [folders, setFolders] = useState<ApiFolder[]>([])
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [newFolderOpen, setNewFolderOpen] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [creatingFolder, setCreatingFolder] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const [docs, fds] = await Promise.all([listDocuments() as Promise<ApiDoc[]>, listFolders()])
+      const [docs, fds] = await Promise.all([
+        listDocuments(activeFolderId ?? undefined) as Promise<ApiDoc[]>,
+        listFolders(),
+      ])
       setItems(docs)
       setFolders(fds)
     } catch {
@@ -72,7 +97,7 @@ export default function DocumentsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [activeFolderId])
 
   useEffect(() => {
     void refresh()
@@ -103,35 +128,84 @@ export default function DocumentsPage() {
   async function onShare(docId: string) {
     try {
       await shareDocument({ documentId: docId, allowDownload: true })
+      toast({ title: 'Share link created', description: 'See Shared Files to copy the link.' })
       await refresh()
     } catch {
       /* noop */
     }
   }
 
+  async function onDelete(docId: string, name: string) {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return
+    try {
+      await deleteDocument(docId)
+      toast({ title: 'Deleted', description: `${name} was removed.` })
+      await refresh()
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to delete'
+      toast({ title: 'Error', description: message, variant: 'destructive' })
+    }
+  }
+
+  async function onCreateFolder() {
+    const name = newFolderName.trim()
+    if (!name) return
+    setCreatingFolder(true)
+    try {
+      await createFolder({ name })
+      setNewFolderOpen(false)
+      setNewFolderName('')
+      toast({ title: 'Folder created' })
+      await refresh()
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to create folder'
+      toast({ title: 'Error', description: message, variant: 'destructive' })
+    } finally {
+      setCreatingFolder(false)
+    }
+  }
+
+  const activeFolder = folders.find((f) => f.id === activeFolderId)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Documents</h1>
-          <p className="text-muted-foreground">Manage and organize your files</p>
+          <p className="text-muted-foreground">
+            {activeFolder ? `Folder: ${activeFolder.name}` : 'Manage and organize your files'}
+          </p>
         </div>
-        <Button className="glow-primary" asChild>
-          <Link href="/dashboard/upload">
-            <Plus className="w-4 h-4 mr-2" />
-            New Document
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setNewFolderOpen(true)}>
+            <FolderPlus className="w-4 h-4 mr-2" />
+            New Folder
+          </Button>
+          <Button className="glow-primary" asChild>
+            <Link href={activeFolderId ? `/dashboard/upload?folderId=${activeFolderId}` : '/dashboard/upload'}>
+              <Plus className="w-4 h-4 mr-2" />
+              Upload
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div>
-        <h2 className="text-lg font-semibold text-foreground mb-4">Folders</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-foreground">Folders</h2>
+          {activeFolderId && (
+            <Button variant="ghost" size="sm" onClick={() => setActiveFolderId(null)}>
+              Show all documents
+            </Button>
+          )}
+        </div>
         {folders.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No folders yet. Create one via the API or upload flow.</p>
+          <p className="text-sm text-muted-foreground">No folders yet. Create one to organize uploads.</p>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {folders.map((folder, index) => {
               const ac = folderAccent[index % folderAccent.length]
+              const selected = activeFolderId === folder.id
               return (
                 <motion.div
                   key={folder.id}
@@ -139,22 +213,13 @@ export default function DocumentsPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: index * 0.05 }}
                 >
-                  <Card className="cursor-pointer hover:border-primary/30 transition-colors group">
+                  <Card
+                    className={`cursor-pointer hover:border-primary/30 transition-colors group ${selected ? 'border-primary' : ''}`}
+                    onClick={() => setActiveFolderId(folder.id)}
+                  >
                     <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div
-                          className={`w-10 h-10 rounded-lg bg-secondary flex items-center justify-center group-hover:scale-110 transition-transform`}
-                        >
-                          <Folder className={`w-5 h-5 ${ac}`} />
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                          type="button"
-                        >
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
+                      <div className={`w-10 h-10 rounded-lg bg-secondary flex items-center justify-center`}>
+                        <Folder className={`w-5 h-5 ${ac}`} />
                       </div>
                       <div className="mt-3">
                         <p className="font-medium text-foreground">{folder.name}</p>
@@ -171,8 +236,9 @@ export default function DocumentsPage() {
 
       <div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-          <h2 className="text-lg font-semibold text-foreground">All documents</h2>
-
+          <h2 className="text-lg font-semibold text-foreground">
+            {activeFolder ? `Documents in ${activeFolder.name}` : 'All documents'}
+          </h2>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative w-full sm:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -183,14 +249,6 @@ export default function DocumentsPage() {
                 className="pl-9"
               />
             </div>
-            <Button variant="outline" size="sm" type="button">
-              <Filter className="w-4 h-4 mr-2" />
-              Filter
-            </Button>
-            <Button variant="outline" size="sm" type="button">
-              <SortAsc className="w-4 h-4 mr-2" />
-              Sort
-            </Button>
             <div className="flex items-center border border-border rounded-lg p-1">
               <button
                 type="button"
@@ -212,6 +270,8 @@ export default function DocumentsPage() {
 
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading documents…</p>
+        ) : filteredDocuments.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No documents in this view.</p>
         ) : viewMode === 'list' ? (
           <Card>
             <CardContent className="p-0">
@@ -220,16 +280,9 @@ export default function DocumentsPage() {
                   <thead>
                     <tr className="border-b border-border bg-secondary/30">
                       <th className="text-left text-xs font-medium text-muted-foreground p-4">Name</th>
-                      <th className="text-left text-xs font-medium text-muted-foreground p-4 hidden md:table-cell">
-                        Size
-                      </th>
-                      <th className="text-left text-xs font-medium text-muted-foreground p-4 hidden lg:table-cell">
-                        Owner
-                      </th>
-                      <th className="text-left text-xs font-medium text-muted-foreground p-4 hidden sm:table-cell">
-                        Date
-                      </th>
-                      <th className="text-left text-xs font-medium text-muted-foreground p-4">Scan</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground p-4 hidden md:table-cell">Size</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground p-4 hidden lg:table-cell">Owner</th>
+                      <th className="text-left text-xs font-medium text-muted-foreground p-4 hidden sm:table-cell">Date</th>
                       <th className="text-right text-xs font-medium text-muted-foreground p-4">Actions</th>
                     </tr>
                   </thead>
@@ -256,9 +309,7 @@ export default function DocumentsPage() {
                           </div>
                         </td>
                         <td className="p-4 hidden md:table-cell">
-                          <span className="text-sm text-muted-foreground">
-                            {formatBytes(doc.sizeBytes)}
-                          </span>
+                          <span className="text-sm text-muted-foreground">{formatBytes(doc.sizeBytes)}</span>
                         </td>
                         <td className="p-4 hidden lg:table-cell">
                           <span className="text-sm text-muted-foreground">
@@ -270,11 +321,6 @@ export default function DocumentsPage() {
                             {new Date(doc.createdAt).toLocaleString()}
                           </span>
                         </td>
-                        <td className="p-4">
-                          <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-secondary text-foreground">
-                            {doc.scanStatus || '—'}
-                          </span>
-                        </td>
                         <td className="p-4 text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -283,12 +329,6 @@ export default function DocumentsPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem asChild>
-                                <Link href={`/dashboard/documents?focus=${doc.id}`}>
-                                  <Eye className="w-4 h-4 mr-2" />
-                                  Focus
-                                </Link>
-                              </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => void onDownload(doc.id)}>
                                 <Download className="w-4 h-4 mr-2" />
                                 Download
@@ -302,6 +342,13 @@ export default function DocumentsPage() {
                                 Toggle favorite
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => void onDelete(doc.id, doc.name)}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </td>
@@ -321,7 +368,7 @@ export default function DocumentsPage() {
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: index * 0.03 }}
               >
-                <Card className="cursor-pointer hover:border-primary/30 transition-colors group">
+                <Card className="hover:border-primary/30 transition-colors group">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-4">
                       <div className="w-12 h-12 rounded-xl bg-secondary flex items-center justify-center">
@@ -341,16 +388,18 @@ export default function DocumentsPage() {
                           <DropdownMenuItem onClick={() => void onDownload(doc.id)}>Download</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => void onShare(doc.id)}>Share</DropdownMenuItem>
                           <DropdownMenuItem onClick={() => void onFavorite(doc.id)}>Favorite</DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            onClick={() => void onDelete(doc.id, doc.name)}
+                          >
+                            Delete
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
                     <p className="font-medium text-foreground truncate mb-1">{doc.name}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">{formatBytes(doc.sizeBytes)}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">
-                        {doc.scanStatus || '—'}
-                      </span>
-                    </div>
+                    <span className="text-xs text-muted-foreground">{formatBytes(doc.sizeBytes)}</span>
                   </CardContent>
                 </Card>
               </motion.div>
@@ -358,6 +407,34 @@ export default function DocumentsPage() {
           </div>
         )}
       </div>
+
+      <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create folder</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="folderName">Name</Label>
+            <Input
+              id="folderName"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="e.g. Contracts"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void onCreateFolder()
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewFolderOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void onCreateFolder()} disabled={creatingFolder || !newFolderName.trim()}>
+              {creatingFolder ? 'Creating…' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

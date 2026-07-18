@@ -268,7 +268,7 @@ export default function RolesPage() {
                                       setRoleToDelete(role)
                                       setDeleteDialogOpen(true)
                                     }}
-                                    disabled={role._count?.users ?? 0 > 0}
+                                    disabled={(role._count?.users ?? 0) > 0}
                                   >
                                     <Trash2 className="w-4 h-4 mr-2" />
                                     Delete
@@ -312,5 +312,4 @@ export default function RolesPage() {
       </AlertDialog>
     </div>
   )
-}
 }

@@ -16,22 +16,20 @@ import {
   Shield,
   CreditCard,
   BarChart3,
-  Key,
   Bell,
 } from 'lucide-react'
+import { isBillingEnabled } from '@/lib/public-url'
 
-const menuItems = [
+const baseMenuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', href: '/admin' },
   { icon: Building2, label: 'Companies', href: '/admin/companies' },
   { icon: Users, label: 'Users', href: '/admin/users' },
   { icon: Shield, label: 'Security', href: '/admin/security' },
-  { icon: CreditCard, label: 'Subscriptions', href: '/admin/subscriptions' },
+  { icon: CreditCard, label: 'Subscriptions', href: '/admin/subscriptions', billingOnly: true },
   { icon: HardDrive, label: 'Storage', href: '/admin/storage' },
   { icon: BarChart3, label: 'Reports', href: '/admin/reports' },
   { icon: FileSearch, label: 'Audit Logs', href: '/admin/logs' },
-  { icon: Key, label: 'API Keys', href: '/admin/api-keys' },
   { icon: Bell, label: 'Notifications', href: '/admin/notifications' },
-  { icon: Settings, label: 'System Settings', href: '/admin/settings' },
 ]
 
 interface AdminSidebarProps {
@@ -41,10 +39,11 @@ interface AdminSidebarProps {
 
 export function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
   const pathname = usePathname()
+  const billingOn = isBillingEnabled()
+  const menuItems = baseMenuItems.filter((item) => !('billingOnly' in item && item.billingOnly) || billingOn)
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
-      {/* Logo */}
       <div className="flex items-center justify-between h-16 px-4 border-b border-sidebar-border">
         <Link href="/admin" className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-destructive/20 flex items-center justify-center">
@@ -61,7 +60,6 @@ export function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
         </button>
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 px-3 py-4 overflow-y-auto">
         <ul className="space-y-1">
           {menuItems.map((item) => {
@@ -78,61 +76,49 @@ export function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
                       : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
                   )}
                 >
-                  <item.icon className={cn(
-                    "w-5 h-5 shrink-0",
-                    isActive && "text-destructive"
-                  )} />
-                  <span>{item.label}</span>
-                  {isActive && (
-                    <ChevronRight className="w-4 h-4 ml-auto text-destructive" />
-                  )}
+                  <item.icon className={cn("w-5 h-5", isActive && "text-destructive")} />
+                  <span className="flex-1">{item.label}</span>
+                  {isActive && <ChevronRight className="w-4 h-4 text-destructive" />}
                 </Link>
               </li>
             )
           })}
         </ul>
+
+        {!billingOn && (
+          <div className="mt-4 mx-1 p-3 rounded-lg bg-sidebar-accent/40 text-xs text-sidebar-foreground/60">
+            Billing is disabled (free tier). Set <code className="text-[10px]">NEXT_PUBLIC_BILLING_ENABLED=true</code> to enable subscriptions.
+          </div>
+        )}
       </nav>
 
-      {/* User Section */}
       <div className="p-4 border-t border-sidebar-border">
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-destructive/5">
-          <div className="w-10 h-10 rounded-full bg-destructive/20 flex items-center justify-center text-destructive font-semibold">
-            SA
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-sidebar-foreground truncate">
-              Super Admin
-            </p>
-            <p className="text-xs text-sidebar-foreground/60 truncate">
-              admin@tensaedms.com
-            </p>
-          </div>
-        </div>
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-2 text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground"
+        >
+          <Settings className="w-4 h-4" />
+          Back to workspace
+        </Link>
       </div>
     </div>
   )
 
   return (
     <>
-      {/* Desktop Sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-40 lg:w-64 lg:flex lg:flex-col bg-sidebar border-r border-sidebar-border">
         <SidebarContent />
       </div>
-
-      {/* Mobile Sidebar */}
       <AnimatePresence>
         {isOpen && (
           <>
-            {/* Overlay */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              className="fixed inset-0 z-40 bg-black/50 lg:hidden"
               onClick={onClose}
-              className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm lg:hidden"
             />
-            
-            {/* Sidebar */}
             <motion.div
               initial={{ x: -280 }}
               animate={{ x: 0 }}

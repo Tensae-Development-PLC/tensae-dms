@@ -74,7 +74,7 @@ export default function AlertsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Expiry & Alerts</h1>
+        <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Alerts</h1>
         <p className="text-muted-foreground">Notifications and document health alerts from live tenant data</p>
       </div>
 

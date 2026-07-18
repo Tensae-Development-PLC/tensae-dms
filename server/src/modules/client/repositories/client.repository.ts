@@ -17,15 +17,48 @@ export const clientRepository = {
       data: { tenantId, ownerUserId: userId, name: input.name, mimeType: input.mimeType, sizeBytes: input.sizeBytes, storageKey: input.storageKey, folderId: input.folderId },
     });
   },
-  listDocuments(tenantId: string) {
+  listDocuments(tenantId: string, opts?: { folderId?: string; unfiled?: boolean }) {
+    const where: { tenantId: string; folderId?: string | null } = { tenantId };
+    if (opts?.folderId) {
+      where.folderId = opts.folderId;
+    } else if (opts?.unfiled) {
+      where.folderId = null;
+    }
     return prisma.document.findMany({
-      where: { tenantId },
+      where,
       orderBy: { createdAt: "desc" },
       include: { owner: { select: { id: true, fullName: true, email: true } } },
     });
   },
   findDocumentByIdForTenant(documentId: string, tenantId: string) {
     return prisma.document.findFirst({ where: { id: documentId, tenantId } });
+  },
+  async deleteDocument(tenantId: string, documentId: string) {
+    return prisma.$transaction(async (tx) => {
+      await tx.favorite.deleteMany({ where: { documentId, tenantId } });
+      await tx.sharedLink.deleteMany({ where: { documentId, tenantId } });
+      return tx.document.deleteMany({ where: { id: documentId, tenantId } });
+    });
+  },
+  renameDocument(tenantId: string, documentId: string, name: string) {
+    return prisma.document.updateMany({ where: { id: documentId, tenantId }, data: { name } });
+  },
+  findSharedLinkByToken(token: string) {
+    return prisma.sharedLink.findUnique({
+      where: { token },
+      include: {
+        document: {
+          select: {
+            id: true,
+            name: true,
+            mimeType: true,
+            sizeBytes: true,
+            storageKey: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
   },
   createSharedLink(tenantId: string, input: { documentId: string; expiresAt?: Date; allowDownload: boolean }) {
     return prisma.sharedLink.create({
@@ -151,6 +184,12 @@ export const clientRepository = {
     return prisma.tenantQuota.update({
       where: { tenantId },
       data: { storageUsedMb: { increment: deltaMb } },
+    });
+  },
+  decrementQuotaUsage(tenantId: string, deltaMb: number) {
+    return prisma.tenantQuota.update({
+      where: { tenantId },
+      data: { storageUsedMb: { decrement: deltaMb } },
     });
   },
 };

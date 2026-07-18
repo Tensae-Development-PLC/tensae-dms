@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Mail, Shield, Building2, Calendar, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,19 +9,19 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
-import { inviteTeamMemberByEmail } from '@/lib/client-api'
+import { inviteTeamMemberByEmail, listRoles } from '@/lib/client-api'
 
 interface InviteUserDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
 }
 
-const roles = [
-  { id: 'admin', name: 'Admin', description: 'Full access to all features' },
-  { id: 'manager', name: 'Manager', description: 'Manage documents and team' },
-  { id: 'staff', name: 'Staff', description: 'Create and edit documents' },
-  { id: 'viewer', name: 'Viewer', description: 'View-only access' },
-  { id: 'approver', name: 'Approver', description: 'Review and approve documents' },
+const fallbackRoles = [
+  { id: 'ADMIN', name: 'Admin', description: 'Full access to all features' },
+  { id: 'MANAGER', name: 'Manager', description: 'Manage documents and team' },
+  { id: 'STAFF', name: 'Staff', description: 'Create and edit documents' },
+  { id: 'VIEWER', name: 'Viewer', description: 'View-only access' },
+  { id: 'APPROVER', name: 'Approver', description: 'Review and approve documents' },
 ]
 
 const departments = [
@@ -37,7 +37,8 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
   const [temporaryAccess, setTemporaryAccess] = useState(false)
-  
+  const [roles, setRoles] = useState(fallbackRoles)
+
   const [formData, setFormData] = useState({
     email: '',
     role: '',
@@ -45,8 +46,41 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
     expiryDate: '',
   })
 
+  useEffect(() => {
+    if (!open) return
+    let mounted = true
+    ;(async () => {
+      try {
+        const list = await listRoles()
+        if (!mounted) return
+        const fromApi = list
+          .filter((r) => r.code.toUpperCase() !== 'TENANT_OWNER')
+          .map((r) => ({
+            id: r.code,
+            name: r.name,
+            description: r.isSystem ? 'System role' : 'Custom role',
+          }))
+        const codes = new Set(fromApi.map((r) => r.id.toUpperCase()))
+        const merged = [
+          ...fromApi,
+          ...fallbackRoles.filter((r) => !codes.has(r.id.toUpperCase())),
+        ]
+        setRoles(merged)
+      } catch {
+        if (mounted) setRoles(fallbackRoles)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [open])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!formData.role) {
+      toast({ title: 'Select a role', variant: 'destructive' })
+      return
+    }
     setIsLoading(true)
 
     try {
@@ -60,10 +94,11 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
       onOpenChange(false)
       setFormData({ email: '', role: '', department: '', expiryDate: '' })
       setTemporaryAccess(false)
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } }; message?: string }
       toast({
         title: 'Invite failed',
-        description: error instanceof Error ? error.message : 'Could not send the invite email',
+        description: err?.response?.data?.message || err?.message || 'Could not send the invite email',
         variant: 'destructive',
       })
     } finally {
@@ -105,7 +140,7 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
               onValueChange={(value) => setFormData({ ...formData, role: value })}
               required
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" id="invite-role">
                 <div className="flex items-center gap-2">
                   <Shield className="w-4 h-4 text-muted-foreground" />
                   <SelectValue placeholder="Select a role" />
@@ -130,7 +165,7 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
               value={formData.department}
               onValueChange={(value) => setFormData({ ...formData, department: value })}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" id="invite-department">
                 <div className="flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-muted-foreground" />
                   <SelectValue placeholder="Select a department (optional)" />
@@ -157,7 +192,7 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
                 onCheckedChange={setTemporaryAccess}
               />
             </div>
-            
+
             {temporaryAccess && (
               <div className="space-y-2">
                 <Label htmlFor="expiry-date">Access Expires On</Label>
@@ -177,9 +212,9 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
           </div>
 
           <div className="flex gap-3 pt-2">
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               className="flex-1"
               onClick={() => onOpenChange(false)}
             >

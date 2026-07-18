@@ -161,16 +161,10 @@ export default function DashboardPage() {
           <p className="text-muted-foreground">Document overview for your workspace.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/dashboard/upload">
-              <Scan className="w-4 h-4 mr-2" />
-              Upload
-            </Link>
-          </Button>
           <Button size="sm" className="glow-primary" asChild>
             <Link href="/dashboard/upload">
               <Upload className="w-4 h-4 mr-2" />
-              New upload
+              Upload
             </Link>
           </Button>
         </div>

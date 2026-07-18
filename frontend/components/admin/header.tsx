@@ -11,13 +11,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
+import { logout } from '@/lib/auth'
 
 interface AdminHeaderProps {
   onMenuClick: () => void
 }
 
 export function AdminHeader({ onMenuClick }: AdminHeaderProps) {
+  const router = useRouter()
   return (
     <header className="sticky top-0 z-30 h-16 bg-background/80 backdrop-blur-xl border-b border-border">
       <div className="flex items-center justify-between h-full px-4 lg:px-6">
@@ -79,11 +82,15 @@ export function AdminHeader({ onMenuClick }: AdminHeaderProps) {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/" className="flex items-center gap-2 text-destructive cursor-pointer">
-                  <LogOut className="w-4 h-4" />
-                  Log out
-                </Link>
+              <DropdownMenuItem
+                className="flex items-center gap-2 text-destructive cursor-pointer"
+                onClick={async () => {
+                  await logout()
+                  router.push('/admin-login')
+                }}
+              >
+                <LogOut className="w-4 h-4" />
+                Log out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

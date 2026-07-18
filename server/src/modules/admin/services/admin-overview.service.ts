@@ -144,12 +144,15 @@ export const adminOverviewService = {
           documents: { select: { sizeBytes: true } }
         },
         orderBy: { documents: { _count: 'desc' } }
-      }).then(tenants => tenants.map(t => ({
-        name: t.company?.legalName || t.name,
-        documents: t._count.documents,
-        users: t._count.users,
-        storageGb: Math.round(t.documents.reduce((sum, d) => sum + d.sizeBytes, BigInt(0)) / BigInt(1024 * 1024 * 1024) * 10) / 10,
-      }))),
+      }).then(tenants => tenants.map(t => {
+        const bytes = t.documents.reduce((sum, d) => sum + d.sizeBytes, BigInt(0));
+        return {
+          name: t.company?.legalName || t.name,
+          documents: t._count.documents,
+          users: t._count.users,
+          storageGb: Math.round(Number(bytes) / (1024 * 1024 * 1024) * 10) / 10,
+        };
+      })),
     };
   },
 };

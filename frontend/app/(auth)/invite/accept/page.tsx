@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { PasswordStrength } from '@/components/auth/password-strength'
 import { acceptInvite } from '@/lib/client-api'
+import { setTokens } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
 
 function InviteAcceptForm() {
@@ -71,6 +72,10 @@ function InviteAcceptForm() {
         fullName: formData.fullName,
         password: formData.password,
       })
+
+      if (result.accessToken) {
+        setTokens(result.accessToken)
+      }
 
       toast({
         title: 'Success',

@@ -8,6 +8,7 @@ import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env.js";
 import { swaggerSpec } from "./config/swagger.js";
 import { logger } from "./config/logger.js";
+import { installBigIntJson } from "./common/utils/bigint-json.js";
 import { requestContextMiddleware } from "./common/middleware/request-context.middleware.js";
 import { errorMiddleware } from "./common/middleware/error.middleware.js";
 import { abuseSlowDown, globalRateLimiter } from "./common/middleware/abuse-protection.middleware.js";
@@ -16,6 +17,8 @@ import { authRoutes } from "./modules/auth/auth.routes.js";
 import { rbacRoutes } from "./modules/rbac/rbac.routes.js";
 import { clientRoutes } from "./modules/client/client.routes.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
+
+installBigIntJson();
 
 export const app = express();
 const pinoHttp = pinoHttpModule as unknown as (opts: { logger: typeof logger }) => express.RequestHandler;
