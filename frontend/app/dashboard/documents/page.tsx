@@ -15,6 +15,10 @@ import {
   Share2,
   Trash2,
   FolderPlus,
+  Pencil,
+  Eye,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,14 +42,22 @@ import Link from 'next/link'
 import {
   createFolder,
   deleteDocument,
+  deleteFolder,
+  archiveDocument,
+  restoreDocument,
+  getProfile,
   getSignedDownloadUrl,
   listDocuments,
   listFolders,
+  renameDocument,
+  renameFolder,
   shareDocument,
-  toggleFavorite,
+  addFavorite,
 } from '@/lib/client-api'
 import { formatBytes } from '@/lib/format'
+import { canDownloadDocuments } from '@/lib/role-access'
 import { useToast } from '@/hooks/use-toast'
+import { FilePreviewDialog } from '@/components/documents/file-preview'
 
 type ApiDoc = {
   id: string
@@ -81,12 +93,43 @@ export default function DocumentsPage() {
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [shareDocId, setShareDocId] = useState<string | null>(null)
+  const [shareAllowDownload, setShareAllowDownload] = useState(true)
+  const [shareExpiryDays, setShareExpiryDays] = useState('')
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<{ type: 'doc' | 'folder'; id: string; name: string } | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
+  const [canDownload, setCanDownload] = useState(true)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [preview, setPreview] = useState<{
+    url: string
+    name: string
+    mimeType: string
+    id: string
+  } | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const profile = await getProfile()
+        setCanDownload(canDownloadDocuments(profile.roleCode))
+      } catch {
+        setCanDownload(true)
+      }
+    })()
+  }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const [docs, fds] = await Promise.all([
-        listDocuments(activeFolderId ?? undefined) as Promise<ApiDoc[]>,
+        listDocuments({
+          folderId: searchQuery.trim() ? undefined : activeFolderId ?? undefined,
+          q: searchQuery.trim() || undefined,
+          archived: showArchived,
+        }) as Promise<ApiDoc[]>,
         listFolders(),
       ])
       setItems(docs)
@@ -97,15 +140,16 @@ export default function DocumentsPage() {
     } finally {
       setLoading(false)
     }
-  }, [activeFolderId])
+  }, [activeFolderId, searchQuery, showArchived])
 
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    const t = setTimeout(() => {
+      void refresh()
+    }, searchQuery.trim() ? 300 : 0)
+    return () => clearTimeout(t)
+  }, [refresh, searchQuery])
 
-  const filteredDocuments = items.filter((doc) =>
-    doc.name.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  const filteredDocuments = items
 
   async function onDownload(docId: string) {
     try {
@@ -116,22 +160,79 @@ export default function DocumentsPage() {
     }
   }
 
+  async function onPreview(doc: ApiDoc) {
+    try {
+      const { url } = await getSignedDownloadUrl(doc.id, true)
+      setPreview({ url, name: doc.name, mimeType: doc.mimeType, id: doc.id })
+      setPreviewOpen(true)
+    } catch {
+      toast({ title: 'Preview failed', variant: 'destructive' })
+    }
+  }
+
   async function onFavorite(docId: string) {
     try {
-      await toggleFavorite(docId)
-      await refresh()
+      await addFavorite(docId)
+      toast({ title: 'Added to favorites' })
     } catch {
       /* noop */
     }
   }
 
-  async function onShare(docId: string) {
+  function openShare(docId: string) {
+    setShareDocId(docId)
+    setShareAllowDownload(true)
+    setShareExpiryDays('')
+    setShareOpen(true)
+  }
+
+  async function onShareConfirm() {
+    if (!shareDocId) return
     try {
-      await shareDocument({ documentId: docId, allowDownload: true })
-      toast({ title: 'Share link created', description: 'See Shared Files to copy the link.' })
-      await refresh()
+      let expiresAt: string | undefined
+      if (shareExpiryDays.trim()) {
+        const days = Number(shareExpiryDays)
+        if (Number.isFinite(days) && days > 0) {
+          expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
+        }
+      }
+      await shareDocument({
+        documentId: shareDocId,
+        allowDownload: shareAllowDownload,
+        expiresAt,
+      })
+      setShareOpen(false)
+      toast({
+        title: 'Share link created',
+        description: shareAllowDownload
+          ? 'Recipients can preview and download. Copy the link from Shared Files.'
+          : 'Recipients can preview only — download is disabled.',
+      })
     } catch {
-      /* noop */
+      toast({ title: 'Share failed', variant: 'destructive' })
+    }
+  }
+
+  async function onArchive(docId: string, name: string) {
+    if (!confirm(`Archive "${name}"? You can restore it from the archive view.`)) return
+    try {
+      await archiveDocument(docId)
+      toast({ title: 'Archived', description: `${name} was moved to archive.` })
+      await refresh()
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to archive'
+      toast({ title: 'Error', description: message, variant: 'destructive' })
+    }
+  }
+
+  async function onRestore(docId: string, name: string) {
+    try {
+      await restoreDocument(docId)
+      toast({ title: 'Restored', description: `${name} is back in your documents.` })
+      await refresh()
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to restore'
+      toast({ title: 'Error', description: message, variant: 'destructive' })
     }
   }
 
@@ -144,6 +245,49 @@ export default function DocumentsPage() {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Failed to delete'
       toast({ title: 'Error', description: message, variant: 'destructive' })
+    }
+  }
+
+  function openRename(type: 'doc' | 'folder', id: string, name: string) {
+    setRenameTarget({ type, id, name })
+    setRenameValue(name)
+    setRenameOpen(true)
+  }
+
+  async function onRenameConfirm() {
+    if (!renameTarget || !renameValue.trim()) return
+    try {
+      if (renameTarget.type === 'doc') {
+        await renameDocument(renameTarget.id, renameValue.trim())
+      } else {
+        await renameFolder(renameTarget.id, renameValue.trim())
+      }
+      setRenameOpen(false)
+      toast({ title: 'Renamed' })
+      await refresh()
+    } catch (e: unknown) {
+      toast({
+        title: 'Rename failed',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  async function onDeleteFolder(folderId: string, name: string) {
+    if (!confirm(`Delete folder "${name}"? It must be empty.`)) return
+    try {
+      await deleteFolder(folderId)
+      if (activeFolderId === folderId) setActiveFolderId(null)
+      toast({ title: 'Folder deleted' })
+      await refresh()
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string } }; message?: string }
+      toast({
+        title: 'Could not delete folder',
+        description: err?.response?.data?.message || err?.message || 'Folder must be empty',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -173,36 +317,55 @@ export default function DocumentsPage() {
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Documents</h1>
           <p className="text-muted-foreground">
-            {activeFolder ? `Folder: ${activeFolder.name}` : 'Manage and organize your files'}
+            {showArchived
+              ? 'Archived documents — restore or delete permanently'
+              : activeFolder
+                ? `Folder: ${activeFolder.name}`
+                : 'Manage and organize your files'}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setNewFolderOpen(true)}>
-            <FolderPlus className="w-4 h-4 mr-2" />
-            New Folder
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant={showArchived ? 'secondary' : 'outline'}
+            onClick={() => {
+              setShowArchived((v) => !v)
+              setActiveFolderId(null)
+            }}
+          >
+            <Archive className="w-4 h-4 mr-2" />
+            {showArchived ? 'Show active' : 'Archive'}
           </Button>
-          <Button className="glow-primary" asChild>
-            <Link href={activeFolderId ? `/dashboard/upload?folderId=${activeFolderId}` : '/dashboard/upload'}>
-              <Plus className="w-4 h-4 mr-2" />
-              Upload
-            </Link>
-          </Button>
+          {!showArchived && (
+            <>
+              <Button variant="outline" onClick={() => setNewFolderOpen(true)}>
+                <FolderPlus className="w-4 h-4 mr-2" />
+                New Folder
+              </Button>
+              <Button className="glow-primary" asChild>
+                <Link href={activeFolderId ? `/dashboard/upload?folderId=${activeFolderId}` : '/dashboard/upload'}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Upload
+                </Link>
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-foreground">Folders</h2>
-          {activeFolderId && (
-            <Button variant="ghost" size="sm" onClick={() => setActiveFolderId(null)}>
-              Show all documents
-            </Button>
-          )}
-        </div>
-        {folders.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No folders yet. Create one to organize uploads.</p>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {!showArchived && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-foreground">Folders</h2>
+            {activeFolderId && (
+              <Button variant="ghost" size="sm" onClick={() => setActiveFolderId(null)}>
+                Show all documents
+              </Button>
+            )}
+          </div>
+          {folders.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No folders yet. Create one to organize uploads.</p>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {folders.map((folder, index) => {
               const ac = folderAccent[index % folderAccent.length]
               const selected = activeFolderId === folder.id
@@ -218,8 +381,35 @@ export default function DocumentsPage() {
                     onClick={() => setActiveFolderId(folder.id)}
                   >
                     <CardContent className="p-4">
-                      <div className={`w-10 h-10 rounded-lg bg-secondary flex items-center justify-center`}>
-                        <Folder className={`w-5 h-5 ${ac}`} />
+                      <div className="flex items-start justify-between gap-2">
+                        <div className={`w-10 h-10 rounded-lg bg-secondary flex items-center justify-center`}>
+                          <Folder className={`w-5 h-5 ${ac}`} />
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem onClick={() => openRename('folder', folder.id, folder.name)}>
+                              <Pencil className="w-4 h-4 mr-2" />
+                              Rename
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => void onDeleteFolder(folder.id, folder.name)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                       <div className="mt-3">
                         <p className="font-medium text-foreground">{folder.name}</p>
@@ -233,11 +423,12 @@ export default function DocumentsPage() {
           </div>
         )}
       </div>
+      )}
 
       <div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
           <h2 className="text-lg font-semibold text-foreground">
-            {activeFolder ? `Documents in ${activeFolder.name}` : 'All documents'}
+            {showArchived ? 'Archived documents' : activeFolder ? `Documents in ${activeFolder.name}` : 'All documents'}
           </h2>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative w-full sm:w-64">
@@ -329,25 +520,52 @@ export default function DocumentsPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => void onDownload(doc.id)}>
-                                <Download className="w-4 h-4 mr-2" />
-                                Download
+                              <DropdownMenuItem onClick={() => void onPreview(doc)}>
+                                <Eye className="w-4 h-4 mr-2" />
+                                Preview
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void onShare(doc.id)}>
-                                <Share2 className="w-4 h-4 mr-2" />
-                                Create share link
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => void onFavorite(doc.id)}>
-                                <Star className="w-4 h-4 mr-2" />
-                                Toggle favorite
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
+                              {canDownload && (
+                                <DropdownMenuItem onClick={() => void onDownload(doc.id)}>
+                                  <Download className="w-4 h-4 mr-2" />
+                                  Download
+                                </DropdownMenuItem>
+                              )}
+                              {!showArchived && (
+                                <>
+                                  <DropdownMenuItem onClick={() => openShare(doc.id)}>
+                                    <Share2 className="w-4 h-4 mr-2" />
+                                    Create share link
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => openRename('doc', doc.id, doc.name)}>
+                                    <Pencil className="w-4 h-4 mr-2" />
+                                    Rename
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => void onFavorite(doc.id)}>
+                                    <Star className="w-4 h-4 mr-2" />
+                                    Add to favorites
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onClick={() => void onArchive(doc.id, doc.name)}>
+                                    <Archive className="w-4 h-4 mr-2" />
+                                    Archive
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              {showArchived && (
+                                <>
+                                  <DropdownMenuItem onClick={() => void onRestore(doc.id, doc.name)}>
+                                    <ArchiveRestore className="w-4 h-4 mr-2" />
+                                    Restore
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                </>
+                              )}
                               <DropdownMenuItem
                                 className="text-destructive"
                                 onClick={() => void onDelete(doc.id, doc.name)}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
-                                Delete
+                                {showArchived ? 'Delete permanently' : 'Delete'}
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -385,15 +603,27 @@ export default function DocumentsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => void onDownload(doc.id)}>Download</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => void onShare(doc.id)}>Share</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => void onFavorite(doc.id)}>Favorite</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void onPreview(doc)}>Preview</DropdownMenuItem>
+                          {canDownload && (
+                            <DropdownMenuItem onClick={() => void onDownload(doc.id)}>Download</DropdownMenuItem>
+                          )}
+                          {!showArchived && (
+                            <>
+                              <DropdownMenuItem onClick={() => openShare(doc.id)}>Share</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openRename('doc', doc.id, doc.name)}>Rename</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => void onFavorite(doc.id)}>Favorite</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => void onArchive(doc.id, doc.name)}>Archive</DropdownMenuItem>
+                            </>
+                          )}
+                          {showArchived && (
+                            <DropdownMenuItem onClick={() => void onRestore(doc.id, doc.name)}>Restore</DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
                             onClick={() => void onDelete(doc.id, doc.name)}
                           >
-                            Delete
+                            {showArchived ? 'Delete permanently' : 'Delete'}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -435,6 +665,81 @@ export default function DocumentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={shareOpen} onOpenChange={setShareOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create share link</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={shareAllowDownload}
+                onChange={(e) => setShareAllowDownload(e.target.checked)}
+              />
+              Allow download (if off, recipients can still preview in our viewer)
+            </label>
+            <div className="space-y-2">
+              <Label htmlFor="shareExpiry">Expires in (days, optional)</Label>
+              <Input
+                id="shareExpiry"
+                type="number"
+                min={1}
+                placeholder="e.g. 7"
+                value={shareExpiryDays}
+                onChange={(e) => setShareExpiryDays(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShareOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void onShareConfirm()}>Create link</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename {renameTarget?.type === 'folder' ? 'folder' : 'document'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="renameValue">Name</Label>
+            <Input
+              id="renameValue"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void onRenameConfirm()
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void onRenameConfirm()} disabled={!renameValue.trim()}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <FilePreviewDialog
+        open={previewOpen}
+        onOpenChange={(open) => {
+          setPreviewOpen(open)
+          if (!open) setPreview(null)
+        }}
+        srcUrl={preview?.url ?? null}
+        mimeType={preview?.mimeType ?? ''}
+        fileName={preview?.name ?? ''}
+        allowDownload={canDownload}
+        onDownload={preview ? () => void onDownload(preview.id) : undefined}
+      />
     </div>
   )
 }

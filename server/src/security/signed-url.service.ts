@@ -19,8 +19,15 @@ export function verifySignedDownloadToken(token: string): DownloadTokenPayload |
   const [encoded, signature] = token.split(".");
   if (!encoded || !signature) return null;
   const expected = crypto.createHmac("sha256", env.SIGNED_URL_SECRET).update(encoded).digest("base64url");
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-  const payload = JSON.parse(Buffer.from(encoded, "base64url").toString()) as DownloadTokenPayload;
-  if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-  return payload;
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length) return null;
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString()) as DownloadTokenPayload;
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
 }

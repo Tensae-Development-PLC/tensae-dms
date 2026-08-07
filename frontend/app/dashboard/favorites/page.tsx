@@ -9,8 +9,10 @@ import {
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { listFavorites } from '@/lib/client-api'
+import { listFavorites, removeFavorite } from '@/lib/client-api'
 import { formatBytes } from '@/lib/format'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
 
 type FavoriteRow = {
   id: string
@@ -41,30 +43,25 @@ function fileColor(mime: string) {
 }
 
 export default function FavoritesPage() {
+  const { toast } = useToast()
   const [items, setItems] = useState<FavoriteRow[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      setLoading(true)
-      setErr(null)
-      try {
-        const rows = (await listFavorites()) as FavoriteRow[]
-        if (!mounted) return
-        setItems(rows)
-      } catch (e) {
-        if (!mounted) return
-        setErr(e instanceof Error ? e.message : 'Failed to load favorites')
-      } finally {
-        if (mounted) setLoading(false)
-      }
-    })()
-
-    return () => {
-      mounted = false
+  async function load() {
+    setLoading(true)
+    setErr(null)
+    try {
+      setItems((await listFavorites()) as FavoriteRow[])
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to load favorites')
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
+    void load()
   }, [])
 
   const totalBytes = useMemo(() => {
@@ -121,7 +118,24 @@ export default function FavoritesPage() {
                       <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center">
                         <FileText className={`w-7 h-7 ${fileColor(doc.mimeType)}`} />
                       </div>
-                      <Star className="w-4 h-4 text-chart-4 fill-chart-4" />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          void (async () => {
+                            try {
+                              await removeFavorite(doc.id)
+                              toast({ title: 'Removed from favorites' })
+                              await load()
+                            } catch {
+                              toast({ title: 'Failed to remove', variant: 'destructive' })
+                            }
+                          })()
+                        }
+                      >
+                        <Star className="w-4 h-4 text-chart-4 fill-chart-4 mr-1" />
+                        Unfavorite
+                      </Button>
                     </div>
 
                     <h3 className="font-medium text-foreground mb-1 truncate">{doc.name}</h3>

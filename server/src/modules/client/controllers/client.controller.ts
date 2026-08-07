@@ -1,18 +1,17 @@
 import type { Request, Response } from "express";
 import {
   createApiKeySchema,
-  createDocumentSchema,
   createFolderSchema,
   createNotificationSchema,
   createShareSchema,
   inviteTeamByEmailSchema,
   createWorkflowSchema,
   inviteTeamSchema,
-  updateProfileSecuritySchema,
   updateSettingsSchema,
 } from "../dto/client.dto.js";
 import { clientService } from "../services/client.service.js";
 import { storageService } from "../../../storage/storage.service.js";
+import { ALLOWED_INVITE_ROLE_CODES, normalizeRoleCode, RESERVED_ROLE_CODES } from "../../../common/utils/reserved-roles.js";
 import { AppError } from "../../../common/utils/app-error.js";
 import { prisma } from "../../../config/prisma.js";
 import { issueSignedDownloadToken } from "../../../security/signed-url.service.js";
@@ -21,13 +20,8 @@ import { jobDispatcher } from "../../../jobs/services/job-dispatcher.service.js"
 import { auditService } from "../../audit/services/audit.service.js";
 import { publicApiBaseUrl, publicAppBaseUrl } from "../../../common/utils/public-urls.js";
 
-const allowedMimeTypes = new Set([
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-]);
+import { isAllowedUpload } from "../../../common/utils/allowed-mime-types.js";
+import { canDownloadDocuments } from "../../../common/utils/document-access.js";
 
 const context = (req: Request) => ({
   tenantId: req.requestContext?.tenantId ?? "",
@@ -45,10 +39,9 @@ export const clientController = {
     const { tenantId } = context(req);
     res.json(await clientService.listFolders(tenantId));
   },
-  async createDocument(req: Request, res: Response) {
-    const dto = createDocumentSchema.parse(req.body);
-    const ctx = context(req);
-    res.status(201).json(await clientService.createDocument(ctx.tenantId, ctx.userId, dto));
+  async createDocument(_req: Request, res: Response) {
+    // Client-supplied storageKey is unsafe — documents must be created via multipart upload.
+    throw new AppError(405, "Use POST /client/documents/upload to create documents");
   },
   async uploadDocument(req: Request, res: Response) {
     const ctx = context(req);
@@ -58,7 +51,7 @@ export const clientController = {
       throw new AppError(400, "No file uploaded");
     }
     
-    if (!allowedMimeTypes.has(file.mimetype)) {
+    if (!isAllowedUpload(file.mimetype, file.originalname)) {
       throw new AppError(400, "Unsupported file type");
     }
 
@@ -103,12 +96,23 @@ export const clientController = {
       documentInput.folderId = req.body.folderId;
     }
 
-    const item = await clientService.createDocument(ctx.tenantId, ctx.userId, documentInput);
+    const item = await clientService.createDocument(ctx.tenantId, ctx.userId, {
+      ...documentInput,
+      scanStatus: "CLEAN",
+    });
 
     res.status(201).json(item);
   },
   async signedDownloadUrl(req: Request, res: Response) {
     const ctx = context(req);
+    const roleCode = (req as Request & { auth?: { roleCode?: string } }).auth?.roleCode;
+    const previewOnly =
+      req.body?.purpose === "preview" ||
+      req.query.inline === "1" ||
+      req.query.inline === "true";
+    if (!previewOnly && !canDownloadDocuments(roleCode)) {
+      throw new AppError(403, "Your role is view-only and cannot download files");
+    }
     const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
     const document = await clientService.findDocumentByIdForTenant(documentId, ctx.tenantId);
     if (!document) {
@@ -116,13 +120,26 @@ export const clientController = {
     }
     const token = issueSignedDownloadToken({ documentId, tenantId: ctx.tenantId, userId: ctx.userId }, 10 * 60);
     const base = publicApiBaseUrl(`${req.protocol}://${req.get("host")}`);
-    const url = `${base}/api/v1/client/documents/${documentId}/download?token=${encodeURIComponent(token)}`;
-    res.json({ url, expiresInSeconds: 600 });
+    const inlineQs = previewOnly ? "&inline=1" : "";
+    const url = `${base}/api/v1/client/documents/${documentId}/download?token=${encodeURIComponent(token)}${inlineQs}`;
+    res.json({ url, expiresInSeconds: 600, previewOnly });
   },
   async deleteDocument(req: Request, res: Response) {
     const ctx = context(req);
     const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
     const result = await clientService.deleteDocument(ctx.tenantId, ctx.userId, documentId);
+    res.json(result);
+  },
+  async archiveDocument(req: Request, res: Response) {
+    const ctx = context(req);
+    const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
+    const result = await clientService.archiveDocument(ctx.tenantId, ctx.userId, documentId);
+    res.json(result);
+  },
+  async restoreDocument(req: Request, res: Response) {
+    const ctx = context(req);
+    const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
+    const result = await clientService.restoreDocument(ctx.tenantId, ctx.userId, documentId);
     res.json(result);
   },
   async renameDocument(req: Request, res: Response) {
@@ -135,21 +152,58 @@ export const clientController = {
   },
   async streamDownload(req: Request, res: Response) {
     const ctx = context(req);
+    const roleCode = (req as Request & { auth?: { roleCode?: string } }).auth?.roleCode;
+    const inline = req.query.inline === "1" || req.query.inline === "true";
+    if (!inline && !canDownloadDocuments(roleCode)) {
+      throw new AppError(403, "Your role is view-only and cannot download files");
+    }
     const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
     const document = await clientService.findDocumentByIdForTenant(documentId, ctx.tenantId);
     if (!document) {
       throw new AppError(404, "Document not found");
     }
+    const safeName = document.name.replace(/["\r\n]/g, "_");
     res.setHeader("Content-Type", document.mimeType);
-    res.setHeader("Content-Disposition", `attachment; filename="${document.name}"`);
+    res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeName}"`);
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     const stream = await storageService.getReadStream(document.storageKey);
     stream.pipe(res);
   },
   async listDocuments(req: Request, res: Response) {
     const { tenantId } = context(req);
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    if (q) {
+      res.json(await clientService.searchDocuments(tenantId, q));
+      return;
+    }
     const folderId = typeof req.query.folderId === "string" ? req.query.folderId : undefined;
     const unfiled = req.query.unfiled === "1" || req.query.unfiled === "true";
-    res.json(await clientService.listDocuments(tenantId, { folderId, unfiled }));
+    const archived = req.query.archived === "1" || req.query.archived === "true";
+    res.json(await clientService.listDocuments(tenantId, { folderId, unfiled, archived }));
+  },
+  async renameFolder(req: Request, res: Response) {
+    const ctx = context(req);
+    const folderId = Array.isArray(req.params.folderId) ? req.params.folderId[0] : req.params.folderId;
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!name) throw new AppError(400, "name is required");
+    res.json(await clientService.renameFolder(ctx.tenantId, ctx.userId, folderId, name));
+  },
+  async deleteFolder(req: Request, res: Response) {
+    const ctx = context(req);
+    const folderId = Array.isArray(req.params.folderId) ? req.params.folderId[0] : req.params.folderId;
+    res.json(await clientService.deleteFolder(ctx.tenantId, ctx.userId, folderId));
+  },
+  async revokeSharedLink(req: Request, res: Response) {
+    const ctx = context(req);
+    const linkId = Array.isArray(req.params.linkId) ? req.params.linkId[0] : req.params.linkId;
+    res.json(await clientService.revokeSharedLink(ctx.tenantId, ctx.userId, linkId));
+  },
+  async unfavoriteDocument(req: Request, res: Response) {
+    const { tenantId, userId } = context(req);
+    const documentId = Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId;
+    res.json(await clientService.unfavoriteDocument(tenantId, userId, documentId));
   },
   async resolveSharedLink(req: Request, res: Response) {
     const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
@@ -172,13 +226,13 @@ export const clientController = {
   async viewSharedLink(req: Request, res: Response) {
     const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
     const { document } = await clientService.getSharedLinkForDownload(token);
+    // Preview stream (inline). Download remains gated on allowDownload separately.
     const safeName = document.name.replace(/["\r\n]/g, "_");
     res.setHeader("Content-Type", document.mimeType);
     res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    // Allow embedding the preview on the public share page (different origin in dev)
-    res.removeHeader("X-Frame-Options");
-    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     const stream = await storageService.getReadStream(document.storageKey);
     stream.pipe(res);
   },
@@ -218,6 +272,10 @@ export const clientController = {
     const { tenantId, userId } = context(req);
     res.json(await clientService.listNotifications(tenantId, userId));
   },
+  async markAllNotificationsRead(req: Request, res: Response) {
+    const { tenantId, userId } = context(req);
+    res.json(await clientService.markAllNotificationsRead(tenantId, userId));
+  },
   async inviteMember(req: Request, res: Response) {
     const dto = inviteTeamSchema.parse(req.body);
     const ctx = context(req);
@@ -234,9 +292,15 @@ export const clientController = {
       throw new AppError(404, "Inviter not found");
     }
 
-    // Resolve role by code or name (invite UI sends ids like "viewer", "admin")
+    // Resolve role by code or name (invite UI sends ids like "VIEWER", "ADMIN")
     const roleKey = dto.role.trim();
-    const roleKeyUpper = roleKey.toUpperCase().replace(/\s+/g, "_");
+    const roleKeyUpper = normalizeRoleCode(roleKey);
+    if (roleKeyUpper === "SYS_ADMIN" || roleKeyUpper === "TENANT_OWNER") {
+      throw new AppError(400, "Invalid role");
+    }
+    if (!ALLOWED_INVITE_ROLE_CODES.has(roleKeyUpper) && RESERVED_ROLE_CODES.has(roleKeyUpper)) {
+      throw new AppError(400, "Invalid role");
+    }
     let role = await prisma.role.findFirst({
       where: {
         tenantId: ctx.tenantId,
@@ -248,8 +312,11 @@ export const clientController = {
       },
     });
 
-    // Create standard invite roles on demand if the tenant only has TENANT_OWNER yet
+    // Create standard invite roles on demand (allowlist only)
     if (!role) {
+      if (!ALLOWED_INVITE_ROLE_CODES.has(roleKeyUpper)) {
+        throw new AppError(400, "Invalid role");
+      }
       const displayName = roleKey
         .split(/[_\s-]+/)
         .filter(Boolean)
@@ -339,7 +406,10 @@ export const clientController = {
     }
     
     // Generate uppercase code from name (e.g. Staff → STAFF) for RBAC matching
-    const code = name.trim().toUpperCase().replace(/\s+/g, '_');
+    const code = normalizeRoleCode(name);
+    if (RESERVED_ROLE_CODES.has(code)) {
+      throw new AppError(400, `Role code "${code}" is reserved`);
+    }
     
     // Create role
     const role = await prisma.role.create({
@@ -575,11 +645,6 @@ export const clientController = {
     const apiKeyId = Array.isArray(req.params.apiKeyId) ? req.params.apiKeyId[0] : req.params.apiKeyId;
     await clientService.deleteApiKey(ctx.tenantId, ctx.userId, apiKeyId);
     res.status(204).send();
-  },
-  async updateProfileSecurity(req: Request, res: Response) {
-    const dto = updateProfileSecuritySchema.parse(req.body);
-    const { tenantId, userId } = context(req);
-    res.json(await clientService.updateProfileSecurity(userId, tenantId, dto));
   },
   async tenantReport(req: Request, res: Response) {
     const { tenantId, userId } = context(req);

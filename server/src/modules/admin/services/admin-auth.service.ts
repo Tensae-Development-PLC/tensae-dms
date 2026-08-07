@@ -7,9 +7,10 @@ import type { AdminLoginDto } from "../dto/admin-auth.dto.js";
 import { auditService } from "../../audit/services/audit.service.js";
 
 export const ADMIN_REFRESH_JWT_TYP = "admin_rt";
+export const ADMIN_ACCESS_JWT_TYP = "admin_at";
 
 function signAccessToken(payload: { sub: string; tenantId: string; roleCode: string }) {
-  return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
+  return jwt.sign({ ...payload, typ: ADMIN_ACCESS_JWT_TYP }, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
 }
 
 function safeEqual(a: string, b: string): boolean {

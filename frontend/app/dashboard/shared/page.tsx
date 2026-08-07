@@ -12,12 +12,13 @@ import {
   Eye,
   Loader2,
   FileText,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { listSharedLinks } from '@/lib/client-api'
-
+import { listSharedLinks, revokeSharedLink } from '@/lib/client-api'
+import { useToast } from '@/hooks/use-toast'
 import { buildShareUrl } from '@/lib/public-url'
 
 type SharedLinkRow = {
@@ -35,30 +36,25 @@ type SharedLinkRow = {
 }
 
 export default function SharedFilesPage() {
+  const { toast } = useToast()
   const [items, setItems] = useState<SharedLinkRow[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      setLoading(true)
-      setErr(null)
-      try {
-        const rows = await listSharedLinks()
-        if (!mounted) return
-        setItems(rows)
-      } catch (e) {
-        if (!mounted) return
-        setErr(e instanceof Error ? e.message : 'Failed to load shared links')
-      } finally {
-        if (mounted) setLoading(false)
-      }
-    })()
-
-    return () => {
-      mounted = false
+  async function load() {
+    setLoading(true)
+    setErr(null)
+    try {
+      setItems(await listSharedLinks())
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to load shared links')
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
+    void load()
   }, [])
 
   const stats = useMemo(() => {
@@ -79,6 +75,22 @@ export default function SharedFilesPage() {
   async function copyLink(token: string) {
     const url = buildShareUrl(token)
     await navigator.clipboard.writeText(url)
+    toast({ title: 'Link copied' })
+  }
+
+  async function onRevoke(id: string) {
+    if (!confirm('Revoke this share link? Recipients will lose access.')) return
+    try {
+      await revokeSharedLink(id)
+      toast({ title: 'Link revoked' })
+      await load()
+    } catch (e: unknown) {
+      toast({
+        title: 'Revoke failed',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
   }
 
   return (
@@ -170,7 +182,7 @@ export default function SharedFilesPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant={item.allowDownload ? 'default' : 'secondary'}>
                           <Shield className="w-3 h-3 mr-1" />
-                          {item.allowDownload ? 'download' : 'view only'}
+                          {item.allowDownload ? 'view & download' : 'metadata only'}
                         </Badge>
 
                         <Badge variant={expired ? 'destructive' : 'secondary'}>{expired ? 'expired' : 'active'}</Badge>
@@ -182,6 +194,15 @@ export default function SharedFilesPage() {
                           <a href={shareUrl} target="_blank" rel="noreferrer noopener" aria-label="Open share link">
                             <ExternalLink className="w-4 h-4" />
                           </a>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive"
+                          onClick={() => void onRevoke(item.id)}
+                          aria-label="Revoke link"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
                     </div>

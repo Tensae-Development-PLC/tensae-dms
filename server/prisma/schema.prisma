@@ -168,7 +168,8 @@ model Document {
   storageKey  String
   sizeBytes   BigInt
   mimeType    String
-  scanStatus  ScanStatus   @default(PENDING)
+  scanStatus  ScanStatus   @default(CLEAN)
+  archivedAt  DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   folderId    String?

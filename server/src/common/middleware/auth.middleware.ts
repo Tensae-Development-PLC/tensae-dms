@@ -6,6 +6,7 @@ export type AccessTokenPayload = {
   sub: string;
   tenantId: string;
   roleCode: string;
+  typ?: string;
 };
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {

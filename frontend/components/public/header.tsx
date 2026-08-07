@@ -70,7 +70,7 @@ export function Header() {
               <Link href="/login">Sign In</Link>
             </Button>
             <Button size="sm" className="glow-primary" asChild>
-              <Link href="/contact">Start a Project</Link>
+              <Link href="/register">Get Started</Link>
             </Button>
           </div>
 
@@ -112,10 +112,10 @@ export function Header() {
               ))}
               <div className="pt-4 space-y-2 border-t border-border">
                 <Button variant="outline" className="w-full" asChild>
-                  <Link href="/dashboard">Sign In</Link>
+                  <Link href="/login">Sign In</Link>
                 </Button>
                 <Button className="w-full glow-primary" asChild>
-                  <Link href="/contact">Start a Project</Link>
+                  <Link href="/register">Get Started</Link>
                 </Button>
               </div>
             </div>

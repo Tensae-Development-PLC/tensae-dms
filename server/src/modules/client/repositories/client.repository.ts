@@ -12,13 +12,27 @@ export const clientRepository = {
       include: { _count: { select: { documents: true } } },
     });
   },
-  createDocument(tenantId: string, userId: string, input: { name: string; mimeType: string; sizeBytes: bigint; storageKey: string; folderId?: string }) {
+  createDocument(tenantId: string, userId: string, input: { name: string; mimeType: string; sizeBytes: bigint; storageKey: string; folderId?: string; scanStatus?: "CLEAN" | "FAILED" | "PENDING" | "QUARANTINED" }) {
     return prisma.document.create({
-      data: { tenantId, ownerUserId: userId, name: input.name, mimeType: input.mimeType, sizeBytes: input.sizeBytes, storageKey: input.storageKey, folderId: input.folderId },
+      data: {
+        tenantId,
+        ownerUserId: userId,
+        name: input.name,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        storageKey: input.storageKey,
+        folderId: input.folderId,
+        scanStatus: input.scanStatus ?? "CLEAN",
+      },
     });
   },
-  listDocuments(tenantId: string, opts?: { folderId?: string; unfiled?: boolean }) {
-    const where: { tenantId: string; folderId?: string | null } = { tenantId };
+  listDocuments(tenantId: string, opts?: { folderId?: string; unfiled?: boolean; archived?: boolean }) {
+    const where: { tenantId: string; folderId?: string | null; archivedAt?: null | { not: null } } = { tenantId };
+    if (opts?.archived) {
+      where.archivedAt = { not: null };
+    } else {
+      where.archivedAt = null;
+    }
     if (opts?.folderId) {
       where.folderId = opts.folderId;
     } else if (opts?.unfiled) {
@@ -28,6 +42,24 @@ export const clientRepository = {
       where,
       orderBy: { createdAt: "desc" },
       include: { owner: { select: { id: true, fullName: true, email: true } } },
+    });
+  },
+  archiveDocument(tenantId: string, documentId: string) {
+    return prisma.document.updateMany({
+      where: { id: documentId, tenantId, archivedAt: null },
+      data: { archivedAt: new Date() },
+    });
+  },
+  restoreDocument(tenantId: string, documentId: string) {
+    return prisma.document.updateMany({
+      where: { id: documentId, tenantId },
+      data: { archivedAt: null },
+    });
+  },
+  markAllNotificationsRead(tenantId: string, userId: string) {
+    return prisma.notification.updateMany({
+      where: { tenantId, userId, readAt: null },
+      data: { readAt: new Date() },
     });
   },
   findDocumentByIdForTenant(documentId: string, tenantId: string) {
@@ -88,8 +120,43 @@ export const clientRepository = {
       update: {},
     });
   },
+  removeFavorite(tenantId: string, userId: string, documentId: string) {
+    return prisma.favorite.deleteMany({ where: { tenantId, userId, documentId } });
+  },
   listFavorites(tenantId: string, userId: string) {
     return prisma.favorite.findMany({ where: { tenantId, userId }, include: { document: true } });
+  },
+  deleteSharedLink(tenantId: string, linkId: string) {
+    return prisma.sharedLink.deleteMany({ where: { id: linkId, tenantId } });
+  },
+  renameFolder(tenantId: string, folderId: string, name: string) {
+    return prisma.folder.updateMany({ where: { id: folderId, tenantId }, data: { name } });
+  },
+  async deleteFolder(tenantId: string, folderId: string) {
+    const folder = await prisma.folder.findFirst({ where: { id: folderId, tenantId } });
+    if (!folder) return { deleted: false };
+    const childCount = await prisma.folder.count({ where: { parentId: folderId, tenantId } });
+    if (childCount > 0) {
+      throw new Error("FOLDER_HAS_CHILDREN");
+    }
+    const docCount = await prisma.document.count({ where: { folderId, tenantId } });
+    if (docCount > 0) {
+      throw new Error("FOLDER_HAS_DOCUMENTS");
+    }
+    await prisma.folder.deleteMany({ where: { id: folderId, tenantId } });
+    return { deleted: true };
+  },
+  searchDocuments(tenantId: string, query: string) {
+    return prisma.document.findMany({
+      where: {
+        tenantId,
+        archivedAt: null,
+        name: { contains: query, mode: "insensitive" },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: { owner: { select: { id: true, fullName: true, email: true } } },
+    });
   },
   createWorkflow(tenantId: string, input: { name: string; definition: string }) {
     return prisma.workflow.create({ data: { tenantId, name: input.name, definition: input.definition } });
@@ -160,7 +227,7 @@ export const clientRepository = {
     return prisma.apiKey.findMany({ where: { tenantId }, orderBy: { createdAt: "desc" } });
   },
   deleteApiKey(tenantId: string, apiKeyId: string) {
-    return prisma.apiKey.delete({ where: { id: apiKeyId } });
+    return prisma.apiKey.deleteMany({ where: { id: apiKeyId, tenantId } });
   },
   updateProfileSecurity(userId: string, input: { twoFactorEnabled?: boolean; twoFactorSecret?: string }) {
     return prisma.userSecurity.upsert({

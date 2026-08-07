@@ -32,7 +32,7 @@ export const authRepository = {
   findValidRefreshToken(tokenHash: string) {
     return prisma.refreshToken.findFirst({
       where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
-      include: { user: { include: { role: true } } },
+      include: { user: { include: { role: true, profileSecurity: true } } },
     });
   },
   revokeRefreshToken(tokenHash: string) {

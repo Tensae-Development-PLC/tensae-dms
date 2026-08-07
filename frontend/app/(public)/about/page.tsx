@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 const whyChooseUs = [
   {
     title: 'Enterprise Security',
-    description: 'Bank-grade encryption and compliance with industry standards including SOC 2 and GDPR.',
+    description: 'JWT auth, tenant isolation, rate limiting, IP rules, and audit logging for company workspaces.',
   },
   {
     title: 'Scalable Architecture',

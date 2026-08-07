@@ -30,6 +30,8 @@ interface FileUpload {
   documentId?: string
 }
 
+const MAX_FILE_BYTES = 100 * 1024 * 1024
+
 const getFileIcon = (fileName: string) => {
   const ext = fileName.split('.').pop()?.toLowerCase()
   if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) return Image
@@ -108,7 +110,20 @@ function UploadPageInner() {
   }
 
   const queueFiles = (files: File[]) => {
-    const newUploads = files.map((file) => ({
+    const valid: File[] = []
+    for (const file of files) {
+      if (file.size > MAX_FILE_BYTES) {
+        toast({
+          title: 'File too large',
+          description: `${file.name} exceeds the 100 MB limit.`,
+          variant: 'destructive',
+        })
+        continue
+      }
+      valid.push(file)
+    }
+    if (valid.length === 0) return
+    const newUploads = valid.map((file) => ({
       id: Math.random().toString(36).substring(7),
       file,
       progress: 0,
@@ -193,7 +208,7 @@ function UploadPageInner() {
                     Browse Files
                   </Button>
                   <p className="text-xs text-muted-foreground mt-4">
-                    Supported: PDF, DOCX, PNG, JPEG, TXT
+                    Max 100 MB per file. PDF, Office, images, audio, video, text, CSV, and more.
                   </p>
                 </div>
               </motion.div>

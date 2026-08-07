@@ -20,6 +20,7 @@ const businessTypes = [
   'Finance',
   'Education',
   'Manufacturing',
+  'Construction',
   'Retail',
   'Legal',
   'Government',
@@ -50,6 +51,7 @@ export default function RegisterPage() {
   const [formData, setFormData] = useState({
     companyName: '',
     businessType: '',
+    customBusinessType: '',
     country: 'Ethiopia',
     fullName: '',
     email: '',
@@ -64,6 +66,9 @@ export default function RegisterPage() {
 
     if (!formData.companyName.trim()) newErrors.companyName = 'Company name is required'
     if (!formData.businessType) newErrors.businessType = 'Business type is required'
+    if (formData.businessType === 'Other' && !formData.customBusinessType.trim()) {
+      newErrors.customBusinessType = 'Please specify your business type'
+    }
     if (!formData.fullName.trim()) newErrors.fullName = 'Full name is required'
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required'
@@ -160,7 +165,13 @@ export default function RegisterPage() {
                     <Label htmlFor="businessType">Business Type</Label>
                     <Select
                       value={formData.businessType}
-                      onValueChange={(value) => setFormData({ ...formData, businessType: value })}
+                      onValueChange={(value) =>
+                        setFormData({
+                          ...formData,
+                          businessType: value,
+                          customBusinessType: value === 'Other' ? formData.customBusinessType : '',
+                        })
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select type" />
@@ -171,6 +182,19 @@ export default function RegisterPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {formData.businessType === 'Other' && (
+                      <Input
+                        placeholder="e.g. Construction, Agriculture…"
+                        value={formData.customBusinessType}
+                        onChange={(e) =>
+                          setFormData({ ...formData, customBusinessType: e.target.value })
+                        }
+                        className="mt-2"
+                      />
+                    )}
+                    {errors.customBusinessType && (
+                      <p className="text-xs text-destructive">{errors.customBusinessType}</p>
+                    )}
                     {errors.businessType && (
                       <p className="text-xs text-destructive">{errors.businessType}</p>
                     )}

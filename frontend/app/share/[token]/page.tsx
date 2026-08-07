@@ -2,24 +2,16 @@
 
 import { useEffect, useMemo, useState, Suspense } from 'react'
 import { useParams } from 'next/navigation'
-import { Download, Eye, FileText, Loader2, AlertCircle } from 'lucide-react'
+import { Download, FileText, Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { resolveSharedLink } from '@/lib/client-api'
 import { formatBytes } from '@/lib/format'
+import { FilePreview } from '@/components/documents/file-preview'
 
 function apiBase() {
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1'
-}
-
-function previewKind(mime: string): 'image' | 'pdf' | 'video' | 'audio' | 'text' | 'other' {
-  if (mime.startsWith('image/')) return 'image'
-  if (mime === 'application/pdf') return 'pdf'
-  if (mime.startsWith('video/')) return 'video'
-  if (mime.startsWith('audio/')) return 'audio'
-  if (mime.startsWith('text/') || mime === 'application/json') return 'text'
-  return 'other'
 }
 
 function SharePageInner() {
@@ -28,7 +20,6 @@ function SharePageInner() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [link, setLink] = useState<Awaited<ReturnType<typeof resolveSharedLink>> | null>(null)
-  const [textPreview, setTextPreview] = useState<string | null>(null)
 
   const viewUrl = useMemo(
     () => (token ? `${apiBase()}/client/shared/${encodeURIComponent(token)}/view` : ''),
@@ -49,14 +40,6 @@ function SharePageInner() {
       try {
         const resolved = await resolveSharedLink(token)
         setLink(resolved)
-        if (previewKind(resolved.document.mimeType) === 'text') {
-          try {
-            const res = await fetch(`${apiBase()}/client/shared/${encodeURIComponent(token)}/view`)
-            if (res.ok) setTextPreview(await res.text())
-          } catch {
-            /* preview optional */
-          }
-        }
       } catch (e: unknown) {
         const err = e as { response?: { data?: { message?: string } }; message?: string }
         setError(err?.response?.data?.message || err?.message || 'Link not found or expired')
@@ -89,8 +72,6 @@ function SharePageInner() {
     )
   }
 
-  const kind = previewKind(link.document.mimeType)
-
   return (
     <div className="min-h-screen p-4 md:p-8 bg-background">
       <div className="mx-auto max-w-5xl space-y-4">
@@ -104,6 +85,7 @@ function SharePageInner() {
               <CardDescription className="mt-1">
                 {link.document.mimeType} · {formatBytes(link.document.sizeBytes)}
                 {link.expiresAt ? ` · Expires ${new Date(link.expiresAt).toLocaleString()}` : ''}
+                {!link.allowDownload ? ' · View only' : ''}
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -115,50 +97,17 @@ function SharePageInner() {
                   </a>
                 </Button>
               ) : (
-                <p className="text-sm text-muted-foreground self-center">Download disabled — view only</p>
+                <p className="text-sm text-muted-foreground self-center">View only — download disabled</p>
               )}
             </div>
           </CardHeader>
           <CardContent>
-            <div className="rounded-lg border border-border bg-secondary/20 overflow-hidden min-h-[320px] flex items-center justify-center">
-              {kind === 'image' && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={viewUrl}
-                  alt={link.document.name}
-                  className="max-h-[70vh] max-w-full object-contain"
-                />
-              )}
-              {kind === 'pdf' && (
-                <iframe
-                  title={link.document.name}
-                  src={viewUrl}
-                  className="w-full h-[70vh] bg-background"
-                />
-              )}
-              {kind === 'video' && (
-                <video src={viewUrl} controls className="max-h-[70vh] w-full" />
-              )}
-              {kind === 'audio' && (
-                <div className="p-8 w-full">
-                  <audio src={viewUrl} controls className="w-full" />
-                </div>
-              )}
-              {kind === 'text' && (
-                <pre className="w-full max-h-[70vh] overflow-auto p-4 text-sm text-left whitespace-pre-wrap font-mono">
-                  {textPreview ?? 'Loading preview…'}
-                </pre>
-              )}
-              {kind === 'other' && (
-                <div className="text-center p-10 space-y-3">
-                  <Eye className="w-10 h-10 mx-auto text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">
-                    In-browser preview is not available for this file type.
-                    {link.allowDownload ? ' Use Download to open it on your device.' : ''}
-                  </p>
-                </div>
-              )}
-            </div>
+            <FilePreview
+              srcUrl={viewUrl}
+              mimeType={link.document.mimeType}
+              fileName={link.document.name}
+              allowDownload={link.allowDownload}
+            />
           </CardContent>
         </Card>
       </div>

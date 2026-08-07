@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Menu, Search, Bell, User, ChevronDown, LogOut, Settings } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { getProfile } from '@/lib/client-api'
+import { getProfile, listNotifications, markAllNotificationsRead } from '@/lib/client-api'
 import { logout } from '@/lib/auth'
 import {
   DropdownMenu,
@@ -21,16 +21,45 @@ interface DashboardHeaderProps {
   onMenuClick: () => void
 }
 
-const notifications = [
-  { id: 1, title: 'Document approved', message: 'Contract_v2.pdf has been approved', time: '5 min ago' },
-  { id: 2, title: 'New comment', message: 'Sarah left a comment on Invoice.pdf', time: '1 hour ago' },
-  { id: 3, title: 'Document expiring', message: 'License.pdf expires in 3 days', time: '2 hours ago' },
-]
+type NotificationItem = {
+  id: string
+  title: string
+  body: string
+  readAt?: string | null
+  createdAt: string
+}
+
+function formatTimeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins} min ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}
 
 export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
   const router = useRouter()
   const [showNotifications, setShowNotifications] = useState(false)
   const [profile, setProfile] = useState<{ fullName?: string; email?: string } | null>(null)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [loadingNotifications, setLoadingNotifications] = useState(false)
+
+  const unreadCount = notifications.filter((n) => !n.readAt).length
+
+  const loadNotifications = useCallback(async () => {
+    setLoadingNotifications(true)
+    try {
+      const data = await listNotifications()
+      setNotifications(data)
+    } catch {
+      setNotifications([])
+    } finally {
+      setLoadingNotifications(false)
+    }
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -39,12 +68,30 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
         const data = await getProfile()
         if (!mounted) return
         setProfile({ fullName: data.fullName, email: data.email })
-      } catch (e) {
-        // ignore - keep defaults
+      } catch {
+        /* keep defaults */
       }
     })()
-    return () => { mounted = false }
-  }, [])
+    void loadNotifications()
+    return () => {
+      mounted = false
+    }
+  }, [loadNotifications])
+
+  useEffect(() => {
+    if (showNotifications) void loadNotifications()
+  }, [showNotifications, loadNotifications])
+
+  async function onMarkAllRead(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      await markAllNotificationsRead()
+      setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt ?? new Date().toISOString() })))
+    } catch {
+      /* noop */
+    }
+  }
 
   const initials = (() => {
     const name = profile?.fullName || profile?.email || ''
@@ -57,7 +104,6 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
   return (
     <header className="sticky top-0 z-30 h-16 bg-background/80 backdrop-blur-xl border-b border-border">
       <div className="flex items-center justify-between h-full px-4 lg:px-6">
-        {/* Left Section */}
         <div className="flex items-center gap-4">
           <button
             onClick={onMenuClick}
@@ -67,7 +113,6 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
             <Menu className="w-5 h-5" />
           </button>
 
-          {/* Search */}
           <div className="hidden sm:block relative w-64 lg:w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -77,42 +122,64 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
           </div>
         </div>
 
-        {/* Right Section */}
         <div className="flex items-center gap-2">
-          {/* Mobile Search */}
           <button className="sm:hidden p-2 rounded-lg hover:bg-secondary transition-colors">
             <Search className="w-5 h-5" />
           </button>
 
-          {/* Notifications */}
           <DropdownMenu open={showNotifications} onOpenChange={setShowNotifications}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="relative">
                 <Bell className="w-5 h-5" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full" />
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-80">
               <DropdownMenuLabel className="flex items-center justify-between">
                 <span>Notifications</span>
-                <button className="text-xs text-primary hover:underline">Mark all read</button>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={onMarkAllRead}
+                  >
+                    Mark all read
+                  </button>
+                )}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {notifications.map((notification) => (
-                <DropdownMenuItem key={notification.id} className="flex flex-col items-start p-3 cursor-pointer">
-                  <span className="font-medium text-sm">{notification.title}</span>
-                  <span className="text-xs text-muted-foreground">{notification.message}</span>
-                  <span className="text-xs text-muted-foreground mt-1">{notification.time}</span>
+              {loadingNotifications && (
+                <DropdownMenuItem disabled className="text-sm text-muted-foreground">
+                  Loading…
                 </DropdownMenuItem>
-              ))}
+              )}
+              {!loadingNotifications && notifications.length === 0 && (
+                <DropdownMenuItem disabled className="text-sm text-muted-foreground">
+                  No notifications yet
+                </DropdownMenuItem>
+              )}
+              {!loadingNotifications &&
+                notifications.slice(0, 8).map((notification) => (
+                  <DropdownMenuItem
+                    key={notification.id}
+                    className={`flex flex-col items-start p-3 cursor-pointer ${!notification.readAt ? 'bg-secondary/40' : ''}`}
+                  >
+                    <span className="font-medium text-sm">{notification.title}</span>
+                    <span className="text-xs text-muted-foreground">{notification.body}</span>
+                    <span className="text-xs text-muted-foreground mt-1">
+                      {formatTimeAgo(notification.createdAt)}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="justify-center text-primary">
-                View all notifications
+              <DropdownMenuItem asChild className="justify-center text-primary cursor-pointer">
+                <Link href="/dashboard/alerts">View all notifications</Link>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* User Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="flex items-center gap-2 pl-2 pr-3">

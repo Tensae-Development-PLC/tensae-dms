@@ -31,12 +31,14 @@ import {
   createApiKey,
   deleteApiKey,
   getProfile,
+  getTenantSettings,
   listApiKeys,
   listRoles,
   listTeamMembers,
   updatePassword,
   updatePreferences,
   updateProfile,
+  updateTenantSettings,
 } from '@/lib/client-api'
 import { useToast } from '@/hooks/use-toast'
 
@@ -102,6 +104,8 @@ export default function SettingsPage() {
     sessionTimeout: '30',
     loginNotifications: true,
   })
+  const [retentionDays, setRetentionDays] = useState('365')
+  const [savingRetention, setSavingRetention] = useState(false)
 
   const [notifications, setNotifications] = useState({
     email: true,
@@ -130,11 +134,12 @@ export default function SettingsPage() {
     ;(async () => {
       setLoadingPage(true)
       try {
-        const [userProfile, team, roleList, keys] = await Promise.all([
+        const [userProfile, team, roleList, keys, tenantSettings] = await Promise.all([
           getProfile(),
           listTeamMembers(),
           listRoles(),
           listApiKeys().catch(() => [] as ApiKeyRow[]),
+          getTenantSettings().catch(() => null),
         ])
 
         if (!mounted) return
@@ -152,6 +157,9 @@ export default function SettingsPage() {
           sessionTimeout: String(userProfile.preferences?.sessionTimeoutMinutes ?? 30),
           loginNotifications: userProfile.preferences?.loginNotifications ?? true,
         })
+        if (tenantSettings?.retentionDays) {
+          setRetentionDays(String(tenantSettings.retentionDays))
+        }
         setNotifications({
           email: userProfile.preferences?.emailNotifications ?? true,
           push: userProfile.preferences?.pushNotifications ?? true,
@@ -418,6 +426,52 @@ export default function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Document retention</CardTitle>
+                <CardDescription>
+                  Automatically purge documents older than this many days (daily job). Minimum 30.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={30}
+                    max={3650}
+                    className="w-32"
+                    value={retentionDays}
+                    onChange={(e) => setRetentionDays(e.target.value)}
+                  />
+                  <span className="text-sm text-muted-foreground">days</span>
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={savingRetention}
+                  onClick={() =>
+                    void (async () => {
+                      setSavingRetention(true)
+                      try {
+                        await updateTenantSettings({ retentionDays: Number(retentionDays) })
+                        toast({ title: 'Retention updated' })
+                      } catch (e) {
+                        toast({
+                          title: 'Save failed',
+                          description: e instanceof Error ? e.message : 'Could not update retention',
+                          variant: 'destructive',
+                        })
+                      } finally {
+                        setSavingRetention(false)
+                      }
+                    })()
+                  }
+                >
+                  {savingRetention ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  Save retention
+                </Button>
+              </CardContent>
+            </Card>
           </motion.div>
         </TabsContent>
 
@@ -581,7 +635,10 @@ export default function SettingsPage() {
             <Card>
               <CardHeader>
                 <CardTitle>API Keys</CardTitle>
-                <CardDescription>Create tenant API keys for integrations (shown once on create)</CardDescription>
+                <CardDescription>
+                  Authenticate integrations with <code className="text-xs">X-Api-Key</code> or{' '}
+                  <code className="text-xs">Authorization: Bearer dms_…</code>. Raw key is shown once.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex flex-col sm:flex-row gap-2">

@@ -1,10 +1,12 @@
 import { Job, Worker } from "bullmq";
 import { logger } from "../../config/logger.js";
+import { prisma } from "../../config/prisma.js";
 import { redisConnection } from "../queues/connection.js";
 import { queues } from "../queues/queue-registry.js";
 import { sendMail } from "../../common/email/mailer.js";
 import { inviteEmailTemplate, passwordResetTemplate } from "../../common/email/templates.js";
 import { publicAppBaseUrl } from "../../common/utils/public-urls.js";
+import { storageService } from "../../storage/storage.service.js";
 
 type JobHandler = (job: Job) => Promise<void>;
 
@@ -21,6 +23,42 @@ const withDeadLetter = (queueName: string, handler: JobHandler): JobHandler => a
     throw error;
   }
 };
+
+async function runRetentionPurge(): Promise<{ deleted: number }> {
+  const settings = await prisma.tenantSetting.findMany({
+    where: { retentionDays: { gt: 0 } },
+    select: { tenantId: true, retentionDays: true },
+  });
+  let deleted = 0;
+  for (const setting of settings) {
+    const days = setting.retentionDays;
+    if (!days || days < 1) continue;
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const stale = await prisma.document.findMany({
+      where: { tenantId: setting.tenantId, createdAt: { lt: cutoff } },
+      select: { id: true, storageKey: true, sizeBytes: true },
+      take: 200,
+    });
+    for (const doc of stale) {
+      await prisma.$transaction(async (tx) => {
+        await tx.favorite.deleteMany({ where: { documentId: doc.id, tenantId: setting.tenantId } });
+        await tx.sharedLink.deleteMany({ where: { documentId: doc.id, tenantId: setting.tenantId } });
+        await tx.document.deleteMany({ where: { id: doc.id, tenantId: setting.tenantId } });
+      });
+      await storageService.delete(doc.storageKey);
+      const deltaMb = Math.max(1, Math.ceil(Number(doc.sizeBytes) / (1024 * 1024)));
+      const quota = await prisma.tenantQuota.findUnique({ where: { tenantId: setting.tenantId } });
+      if (quota && quota.storageUsedMb > 0) {
+        await prisma.tenantQuota.update({
+          where: { tenantId: setting.tenantId },
+          data: { storageUsedMb: { decrement: Math.min(deltaMb, quota.storageUsedMb) } },
+        });
+      }
+      deleted += 1;
+    }
+  }
+  return { deleted };
+}
 
 const workers = [
   new Worker("email", withDeadLetter("email", async (job) => {
@@ -50,8 +88,28 @@ const workers = [
 
     throw new Error(`Unsupported email template: ${template}`);
   }), { connection: redisConnection }),
-  new Worker("notification-delivery", withDeadLetter("notification-delivery", async () => {}), { connection: redisConnection }),
-  new Worker("document-expiry-alerts", withDeadLetter("document-expiry-alerts", async () => {}), { connection: redisConnection }),
+  new Worker(
+    "notification-delivery",
+    withDeadLetter("notification-delivery", async (job) => {
+      // Mark notification as delivered/read-ready (in-app list already shows rows).
+      const notificationId = typeof job.data?.notificationId === "string" ? job.data.notificationId : null;
+      if (notificationId) {
+        logger.info({ message: "Notification queued for delivery", notificationId });
+      }
+    }),
+    { connection: redisConnection },
+  ),
+  new Worker(
+    "document-expiry-alerts",
+    withDeadLetter("document-expiry-alerts", async (job) => {
+      if (job.name === "retention-purge" || job.data?.action === "retention-purge") {
+        const result = await runRetentionPurge();
+        logger.info({ message: "Retention purge completed", deleted: result.deleted });
+        return;
+      }
+    }),
+    { connection: redisConnection },
+  ),
   new Worker("workflow-reminders", withDeadLetter("workflow-reminders", async () => {}), { connection: redisConnection }),
 ];
 
@@ -67,4 +125,18 @@ export async function stopWorkers(): Promise<void> {
 
 export function startWorkers(): void {
   logger.info({ message: "BullMQ workers initialized", workers: workers.length });
+  // Daily retention purge (also runs once shortly after boot)
+  void queues.documentExpiryAlerts.add(
+    "retention-purge",
+    { action: "retention-purge" },
+    { jobId: "retention-purge-boot", removeOnComplete: true },
+  );
+  void queues.documentExpiryAlerts.add(
+    "retention-purge",
+    { action: "retention-purge" },
+    {
+      repeat: { every: 24 * 60 * 60 * 1000 },
+      jobId: "retention-purge-daily",
+    },
+  );
 }

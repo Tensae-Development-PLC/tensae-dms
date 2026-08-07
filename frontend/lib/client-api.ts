@@ -20,6 +20,7 @@ export async function getProfile() {
     tenantName?: string;
     companyName?: string;
     roleName?: string;
+    roleCode?: string;
     status: string;
     twoFactorEnabled: boolean;
     preferences?: {
@@ -45,6 +46,7 @@ export async function updateProfile(body: { fullName: string; email: string; pho
     tenantName?: string;
     companyName?: string;
     roleName?: string;
+    roleCode?: string;
     status: string;
     twoFactorEnabled: boolean;
     preferences?: {
@@ -79,9 +81,11 @@ export async function updatePassword(body: { currentPassword: string; newPasswor
   return data;
 }
 
-export async function listDocuments(folderId?: string | null) {
+export async function listDocuments(opts?: { folderId?: string | null; q?: string; archived?: boolean }) {
   const params: Record<string, string> = {};
-  if (folderId) params.folderId = folderId;
+  if (opts?.folderId) params.folderId = opts.folderId;
+  if (opts?.q) params.q = opts.q;
+  if (opts?.archived) params.archived = "1";
   const { data } = await api.get<unknown[]>("/client/documents", { params });
   return data;
 }
@@ -96,8 +100,28 @@ export async function createFolder(body: { name: string; parentId?: string }) {
   return data;
 }
 
+export async function renameFolder(folderId: string, name: string) {
+  const { data } = await api.patch<{ id: string; name: string }>(`/client/folders/${folderId}`, { name });
+  return data;
+}
+
+export async function deleteFolder(folderId: string) {
+  const { data } = await api.delete<{ deleted: boolean }>(`/client/folders/${folderId}`);
+  return data;
+}
+
 export async function deleteDocument(documentId: string) {
   const { data } = await api.delete<{ deleted: boolean }>(`/client/documents/${documentId}`);
+  return data;
+}
+
+export async function archiveDocument(documentId: string) {
+  const { data } = await api.post<{ archived: boolean }>(`/client/documents/${documentId}/archive`);
+  return data;
+}
+
+export async function restoreDocument(documentId: string) {
+  const { data } = await api.post<{ restored: boolean }>(`/client/documents/${documentId}/restore`);
   return data;
 }
 
@@ -118,7 +142,37 @@ export async function listFolders() {
 }
 
 export async function listNotifications() {
-  const { data } = await api.get<unknown[]>("/client/notifications");
+  const { data } = await api.get<
+    {
+      id: string;
+      title: string;
+      body: string;
+      readAt?: string | null;
+      createdAt: string;
+    }[]
+  >("/client/notifications");
+  return data;
+}
+
+export async function markAllNotificationsRead() {
+  const { data } = await api.post<{ marked: number }>("/client/notifications/mark-all-read");
+  return data;
+}
+
+export async function getTenantSettings() {
+  const { data } = await api.get<{
+    timezone?: string;
+    twoFactorRequired?: boolean;
+    retentionDays?: number | null;
+  } | null>("/client/settings");
+  return data;
+}
+
+export async function updateTenantSettings(body: {
+  timezone?: string;
+  retentionDays?: number;
+}) {
+  const { data } = await api.patch("/client/settings", body);
   return data;
 }
 
@@ -251,20 +305,38 @@ export async function inviteTeamMemberByEmail(body: {
   return data;
 }
 
-export async function getSignedDownloadUrl(documentId: string) {
-  const { data } = await api.post<{ url: string; expiresInSeconds: number }>(
+export async function getSignedDownloadUrl(documentId: string, inline = false) {
+  const { data } = await api.post<{ url: string; expiresInSeconds: number; previewOnly?: boolean }>(
     `/client/documents/${documentId}/signed-url`,
-    {},
+    inline ? { purpose: "preview" } : {},
   );
+  if (inline && data.url && !data.url.includes("inline=")) {
+    const sep = data.url.includes("?") ? "&" : "?";
+    return { ...data, url: `${data.url}${sep}inline=1` };
+  }
   return data;
 }
 
-export async function toggleFavorite(documentId: string) {
+export async function addFavorite(documentId: string) {
   const { data } = await api.post(`/client/documents/${documentId}/favorite`);
   return data;
 }
 
-export async function shareDocument(body: { documentId: string; expiresAt?: string; allowDownload: boolean }) {
+export async function removeFavorite(documentId: string) {
+  const { data } = await api.delete(`/client/documents/${documentId}/favorite`);
+  return data;
+}
+
+/** @deprecated use addFavorite / removeFavorite */
+export async function toggleFavorite(documentId: string) {
+  return addFavorite(documentId);
+}
+
+export async function shareDocument(body: {
+  documentId: string;
+  expiresAt?: string;
+  allowDownload: boolean;
+}) {
   const { data } = await api.post("/client/documents/share", body);
   return data;
 }
@@ -285,6 +357,11 @@ export async function listSharedLinks() {
       };
     }[]
   >("/client/shared-links");
+  return data;
+}
+
+export async function revokeSharedLink(linkId: string) {
+  const { data } = await api.delete<{ revoked: boolean }>(`/client/shared-links/${linkId}`);
   return data;
 }
 

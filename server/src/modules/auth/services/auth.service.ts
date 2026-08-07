@@ -19,8 +19,13 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-function refreshExpiryDate() {
-  return new Date(Date.now() + env.REFRESH_TOKEN_DAYS * 24 * 3600 * 1000);
+function refreshExpiryDate(sessionTimeoutMinutes?: number | null) {
+  const maxMs = env.REFRESH_TOKEN_DAYS * 24 * 3600 * 1000;
+  const timeoutMs =
+    typeof sessionTimeoutMinutes === "number" && sessionTimeoutMinutes > 0
+      ? sessionTimeoutMinutes * 60 * 1000
+      : maxMs;
+  return new Date(Date.now() + Math.min(maxMs, timeoutMs));
 }
 
 export const authService = {
@@ -62,22 +67,42 @@ export const authService = {
   },
 
   async login(dto: LoginDto) {
+    const { assertNotLockedOut, recordLoginFailure, clearLoginFailures } = await import("../../../common/utils/login-lockout.js");
+    try {
+      assertNotLockedOut(dto.email, dto.tenantId);
+    } catch {
+      throw new AppError(429, "Too many failed login attempts. Try again in 15 minutes.");
+    }
+
     const user = await authRepository.findUserByEmailWithinTenant(dto.email.toLowerCase(), dto.tenantId);
     if (!user) {
+      recordLoginFailure(dto.email, dto.tenantId);
       throw new AppError(401, "Invalid credentials");
     }
 
     const isValid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!isValid) {
+      recordLoginFailure(dto.email, dto.tenantId);
+      await auditService.log({
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        action: "auth.login.failed",
+        entity: "user",
+        entityId: user.id,
+      });
       throw new AppError(401, "Invalid credentials");
     }
 
-    // 2FA is disabled for V1 — skip totp / tenant-required checks so login stays simple.
+    clearLoginFailures(dto.email, dto.tenantId);
 
     const payload = { sub: user.id, tenantId: user.tenantId, roleCode: user.role.code };
     const accessToken = signAccessToken(payload);
     const refreshToken = crypto.randomBytes(32).toString("hex");
-    await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
+    await authRepository.createRefreshToken(
+      user.id,
+      hashToken(refreshToken),
+      refreshExpiryDate(user.profileSecurity?.sessionTimeoutMinutes),
+    );
 
     await auditService.log({
       tenantId: user.tenantId,
@@ -100,7 +125,8 @@ export const authService = {
     const payload = { sub: session.user.id, tenantId: session.user.tenantId, roleCode: session.user.role.code };
     const accessToken = signAccessToken(payload);
     const refreshToken = crypto.randomBytes(32).toString("hex");
-    await authRepository.createRefreshToken(session.user.id, hashToken(refreshToken), refreshExpiryDate());
+    // Keep absolute session end from the previous refresh token (session timeout)
+    await authRepository.createRefreshToken(session.user.id, hashToken(refreshToken), session.expiresAt);
     return { accessToken, refreshToken };
   },
 
@@ -125,7 +151,8 @@ export const authService = {
       resetUrl: `${publicAppBaseUrl()}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`,
     });
     await auditService.log({ tenantId: user.tenantId, actorUserId: user.id, action: "auth.password.forgot", entity: "user", entityId: user.id });
-    return { accepted: true, resetToken: token };
+    // Never return the reset token in the API response — email only.
+    return { accepted: true };
   },
 
   async resetPassword(dto: ResetPasswordDto) {

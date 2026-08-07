@@ -61,6 +61,7 @@ export const clientProfileController = {
       tenantName: user.tenant?.name,
       companyName: user.tenant?.company?.legalName,
       roleName: user.role?.name,
+      roleCode: user.role?.code,
       status: user.status,
       twoFactorEnabled: user.profileSecurity?.twoFactorEnabled ?? false,
       preferences: {
@@ -112,6 +113,7 @@ export const clientProfileController = {
       tenantName: updated.tenant?.name,
       companyName: updated.tenant?.company?.legalName,
       roleName: updated.role?.name,
+      roleCode: updated.role?.code,
       status: updated.status,
       twoFactorEnabled: updated.profileSecurity?.twoFactorEnabled ?? false,
       preferences: {

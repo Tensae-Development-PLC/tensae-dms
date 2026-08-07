@@ -20,7 +20,7 @@ const footerLinks = {
     { label: 'Community', href: '#' },
     { label: 'Support', href: '/contact' },
     { label: 'Status', href: '#' },
-    { label: 'Terms of Service', href: '#' },
+    { label: 'Terms of Service', href: '/terms' },
   ],
 }
 

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
 import { inviteTeamMemberByEmail, listRoles } from '@/lib/client-api'
+import { roleAccessLabel } from '@/lib/role-access'
 
 interface InviteUserDialogProps {
   open: boolean
@@ -17,11 +18,11 @@ interface InviteUserDialogProps {
 }
 
 const fallbackRoles = [
-  { id: 'ADMIN', name: 'Admin', description: 'Full access to all features' },
-  { id: 'MANAGER', name: 'Manager', description: 'Manage documents and team' },
-  { id: 'STAFF', name: 'Staff', description: 'Create and edit documents' },
-  { id: 'VIEWER', name: 'Viewer', description: 'View-only access' },
-  { id: 'APPROVER', name: 'Approver', description: 'Review and approve documents' },
+  { id: 'ADMIN', name: 'Admin', description: roleAccessLabel('ADMIN') },
+  { id: 'MANAGER', name: 'Manager', description: roleAccessLabel('MANAGER') },
+  { id: 'STAFF', name: 'Staff', description: roleAccessLabel('STAFF') },
+  { id: 'VIEWER', name: 'Viewer', description: roleAccessLabel('VIEWER') },
+  { id: 'APPROVER', name: 'Approver', description: roleAccessLabel('APPROVER') },
 ]
 
 const departments = [
@@ -58,7 +59,7 @@ export function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) 
           .map((r) => ({
             id: r.code,
             name: r.name,
-            description: r.isSystem ? 'System role' : 'Custom role',
+            description: roleAccessLabel(r.code),
           }))
         const codes = new Set(fromApi.map((r) => r.id.toUpperCase()))
         const merged = [

@@ -5,11 +5,11 @@ export const createFolderSchema = z.object({
   parentId: z.string().uuid().optional(),
 });
 
+/** Metadata-only document create is disabled — use multipart upload. Kept for type clarity if re-enabled. */
 export const createDocumentSchema = z.object({
   name: z.string().min(1),
   mimeType: z.string().min(1),
   sizeBytes: z.coerce.bigint(),
-  storageKey: z.string().min(1),
   folderId: z.string().uuid().optional(),
 });
 

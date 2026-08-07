@@ -11,7 +11,8 @@ import {
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { listDocuments, listNotifications } from '@/lib/client-api'
+import { listDocuments, listNotifications, markAllNotificationsRead } from '@/lib/client-api'
+import { Button } from '@/components/ui/button'
 
 type NotificationItem = {
   id: string
@@ -39,20 +40,15 @@ export default function AlertsPage() {
     ;(async () => {
       setLoading(true)
       setErr(null)
-      try {
-        const [notes, docs] = await Promise.all([
-          listNotifications() as Promise<NotificationItem[]>,
-          listDocuments() as Promise<ApiDocument[]>,
-        ])
-        if (!mounted) return
-        setNotifications(notes)
-        setDocuments(docs)
-      } catch (e) {
-        if (!mounted) return
-        setErr(e instanceof Error ? e.message : 'Failed to load alerts')
-      } finally {
-        if (mounted) setLoading(false)
-      }
+      const results = await Promise.allSettled([
+        listNotifications() as Promise<NotificationItem[]>,
+        listDocuments() as Promise<ApiDocument[]>,
+      ])
+      if (!mounted) return
+      if (results[0].status === 'fulfilled') setNotifications(results[0].value)
+      else setErr(results[0].reason instanceof Error ? results[0].reason.message : 'Failed to load notifications')
+      if (results[1].status === 'fulfilled') setDocuments(results[1].value)
+      setLoading(false)
     })()
 
     return () => {
@@ -61,9 +57,18 @@ export default function AlertsPage() {
   }, [])
 
   const scanAlerts = useMemo(
-    () => documents.filter((d) => ['FAILED', 'PENDING'].includes((d.scanStatus || '').toUpperCase())),
+    () => documents.filter((d) => (d.scanStatus || '').toUpperCase() === 'FAILED'),
     [documents],
   )
+
+  async function handleMarkAllRead() {
+    try {
+      await markAllNotificationsRead()
+      setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt ?? new Date().toISOString() })))
+    } catch {
+      /* noop */
+    }
+  }
 
   const stats = [
     { label: 'Total Alerts', value: notifications.length + scanAlerts.length, icon: Bell, className: 'text-primary bg-primary/10' },
@@ -105,8 +110,13 @@ export default function AlertsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Notifications</CardTitle>
+            {notifications.some((n) => !n.readAt) && (
+              <Button variant="ghost" size="sm" onClick={() => void handleMarkAllRead()}>
+                Mark all read
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             {loading && (
@@ -171,8 +181,8 @@ export default function AlertsPage() {
                         <FileText className="w-4 h-4 text-primary shrink-0" />
                         <p className="font-medium text-foreground truncate">{doc.name}</p>
                       </div>
-                      <Badge variant={(doc.scanStatus || '').toUpperCase() === 'FAILED' ? 'destructive' : 'secondary'}>
-                        {(doc.scanStatus || 'PENDING').toLowerCase()}
+                      <Badge variant="destructive">
+                        failed scan
                       </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground mt-2">Created {new Date(doc.createdAt).toLocaleString()}</p>

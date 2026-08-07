@@ -7,26 +7,26 @@ const features = [
   {
     icon: Shield,
     title: 'Secure Document Storage',
-    description: 'Bank-grade encryption and multi-layer security protocols protect your sensitive documents from unauthorized access.',
-    features: ['AES-256 Encryption', 'Role-based access', 'Audit trails'],
+    description: 'Multi-tenant isolation, signed downloads, role-based access, and audit trails protect your workspace files.',
+    features: ['Tenant isolation', 'Role-based access', 'Audit trails'],
   },
   {
     icon: Search,
-    title: 'Smart Search',
-    description: 'AI-powered search capabilities that understand context and deliver precise results in milliseconds.',
-    features: ['Full-text search', 'OCR integration', 'Smart filters'],
+    title: 'Document Search',
+    description: 'Find files quickly by name across your workspace folders.',
+    features: ['Filename search', 'Folder browse', 'Favorites'],
   },
   {
     icon: Workflow,
-    title: 'Workflow Automation',
-    description: 'Streamline approvals, reviews, and document routing with customizable automated workflows.',
-    features: ['Custom triggers', 'Multi-step approval', 'Notifications'],
+    title: 'Team Collaboration',
+    description: 'Invite teammates, assign roles, and share links with optional expiry.',
+    features: ['Email invites', 'Share links', 'Activity log'],
   },
   {
     icon: Smartphone,
-    title: 'Mobile Access',
-    description: 'Access your documents securely from any device, anywhere in the world with our responsive platform.',
-    features: ['iOS & Android', 'Offline mode', 'Touch ID support'],
+    title: 'Access Anywhere',
+    description: 'Use Tensae DMS from any modern browser on desktop or mobile.',
+    features: ['Responsive UI', 'Secure login', 'API keys'],
   },
 ]
 

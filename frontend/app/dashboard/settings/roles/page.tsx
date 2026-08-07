@@ -21,6 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/hooks/use-toast'
 import { listRoles, deleteRole, duplicateRole } from '@/lib/client-api'
+import { roleAccessLabel } from '@/lib/role-access'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -148,7 +149,12 @@ export default function RolesPage() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Roles & Permissions</h1>
+          <h1 className="text-2xl lg:text-3xl font-bold text-foreground">Roles</h1>
+          <p className="text-muted-foreground max-w-2xl">
+            System roles define access: <strong>Viewer</strong> and <strong>Approver</strong> can preview
+            files but cannot download. <strong>Staff</strong> and above can upload, edit, and download.
+            Admins manage team and settings.
+          </p>
           <p className="text-muted-foreground">Manage access levels for your team members</p>
         </div>
       </div>
@@ -204,6 +210,7 @@ export default function RolesPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead>Role Name</TableHead>
                       <TableHead className="hidden md:table-cell">Code</TableHead>
+                      <TableHead className="hidden lg:table-cell">Access</TableHead>
                       <TableHead>Users</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead className="hidden lg:table-cell">Created</TableHead>
@@ -226,6 +233,9 @@ export default function RolesPage() {
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-muted-foreground font-mono text-sm">
                           {role.code}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-muted-foreground text-sm max-w-[220px]">
+                          {roleAccessLabel(role.code)}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">

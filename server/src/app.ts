@@ -12,6 +12,7 @@ import { installBigIntJson } from "./common/utils/bigint-json.js";
 import { requestContextMiddleware } from "./common/middleware/request-context.middleware.js";
 import { errorMiddleware } from "./common/middleware/error.middleware.js";
 import { abuseSlowDown, globalRateLimiter } from "./common/middleware/abuse-protection.middleware.js";
+import { ipRulesMiddleware } from "./common/middleware/ip-rules.middleware.js";
 import { healthRoutes } from "./modules/health/health.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { rbacRoutes } from "./modules/rbac/rbac.routes.js";
@@ -36,6 +37,7 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(pinoHttp({ logger }));
 app.use(requestContextMiddleware);
+app.use(ipRulesMiddleware);
 
 app.use("/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
