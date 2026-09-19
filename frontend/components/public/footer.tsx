@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { FileText, Mail, Phone, MapPin, Linkedin, Twitter, Github } from 'lucide-react'
+import { COMPANY_CONTACT } from '@/lib/company-contact'
 
 const footerLinks = {
   product: [
@@ -44,17 +45,17 @@ export function Footer() {
               Enterprise-grade document management solutions that transform how organizations handle, secure, and collaborate on documents.
             </p>
             <div className="space-y-2 text-sm text-muted-foreground">
-              <div className="flex items-center gap-2">
+              <a href={COMPANY_CONTACT.emailHref} className="flex items-center gap-2 hover:text-primary transition-colors">
                 <Mail className="w-4 h-4 text-primary" />
-                <span>contact@tensaedms.com</span>
-              </div>
-              <div className="flex items-center gap-2">
+                <span>{COMPANY_CONTACT.email}</span>
+              </a>
+              <a href={COMPANY_CONTACT.phoneHref} className="flex items-center gap-2 hover:text-primary transition-colors">
                 <Phone className="w-4 h-4 text-primary" />
-                <span>+1 (555) 123-4567</span>
-              </div>
+                <span>{COMPANY_CONTACT.phonePrimary}</span>
+              </a>
               <div className="flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-primary" />
-                <span>San Francisco, CA</span>
+                <span>{COMPANY_CONTACT.address}</span>
               </div>
             </div>
           </div>

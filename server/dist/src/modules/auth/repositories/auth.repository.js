@@ -31,7 +31,7 @@ export const authRepository = {
     findValidRefreshToken(tokenHash) {
         return prisma.refreshToken.findFirst({
             where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
-            include: { user: { include: { role: true } } },
+            include: { user: { include: { role: true, profileSecurity: true } } },
         });
     },
     revokeRefreshToken(tokenHash) {
@@ -105,6 +105,35 @@ export const authRepository = {
             await tx.tenantSetting.create({ data: { tenantId: tenant.id } });
             await tx.tenantQuota.create({ data: { tenantId: tenant.id } });
             return { tenant, user, role };
+        });
+    },
+    createInvite(tenantId, email, roleId, token, expiresAt) {
+        return prisma.invite.upsert({
+            where: { tenantId_email: { tenantId, email } },
+            create: { tenantId, email, roleId, token, expiresAt },
+            update: { token, expiresAt, acceptedAt: null },
+        });
+    },
+    findInviteByTokenAndEmail(token, email) {
+        return prisma.invite.findFirst({
+            where: { token, email },
+        });
+    },
+    markInviteAccepted(inviteId) {
+        return prisma.invite.update({
+            where: { id: inviteId },
+            data: { acceptedAt: new Date() },
+        });
+    },
+    createUserInTenant(data) {
+        return prisma.user.create({
+            data,
+            include: { role: true },
+        });
+    },
+    createTeamMember(tenantId, userId, invitedById) {
+        return prisma.teamMember.create({
+            data: { tenantId, userId, invitedById },
         });
     },
 };

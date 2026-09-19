@@ -17,6 +17,8 @@ adminRoutes.post("/auth/logout", authRateLimiter, adminAuthController.logout);
 // protected
 adminRoutes.use(authMiddleware, requireSysAdmin);
 adminRoutes.get("/overview", adminOverviewController.snapshot);
+adminRoutes.get("/storage/metrics", adminOverviewController.storageMetrics);
+adminRoutes.get("/reports/detailed", adminOverviewController.detailedReports);
 adminRoutes.get("/tenants", adminTenantsController.list);
 adminRoutes.get("/users", adminUsersController.list);
 adminRoutes.get("/notifications", adminNotificationsController.list);

@@ -5,8 +5,9 @@ import { AppError } from "../../../common/utils/app-error.js";
 import { SYSADMIN_ROLE_CODE, SYSADMIN_TENANT_ID } from "../admin.constants.js";
 import { auditService } from "../../audit/services/audit.service.js";
 export const ADMIN_REFRESH_JWT_TYP = "admin_rt";
+export const ADMIN_ACCESS_JWT_TYP = "admin_at";
 function signAccessToken(payload) {
-    return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
+    return jwt.sign({ ...payload, typ: ADMIN_ACCESS_JWT_TYP }, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
 }
 function safeEqual(a, b) {
     const aa = Buffer.from(a);

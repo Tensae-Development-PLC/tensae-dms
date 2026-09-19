@@ -3,10 +3,16 @@ import { auditService } from "../../audit/services/audit.service.js";
 import { clientRepository } from "../repositories/client.repository.js";
 import { AppError } from "../../../common/utils/app-error.js";
 import { jobDispatcher } from "../../../jobs/services/job-dispatcher.service.js";
+import { storageService } from "../../../storage/storage.service.js";
 export const clientService = {
     createFolder: clientRepository.createFolder,
     listFolders: clientRepository.listFolders,
-    listDocuments: clientRepository.listDocuments,
+    listDocuments(tenantId, opts) {
+        return clientRepository.listDocuments(tenantId, opts);
+    },
+    searchDocuments(tenantId, query) {
+        return clientRepository.searchDocuments(tenantId, query);
+    },
     listSharedLinks: clientRepository.listSharedLinks,
     listWorkflows: clientRepository.listWorkflows,
     async listTeamMembers(tenantId) {
@@ -19,6 +25,7 @@ export const clientService = {
         }));
     },
     listRoles: clientRepository.listRoles,
+    getRoleById: clientRepository.getRoleById,
     listApiKeys: clientRepository.listApiKeys,
     getSettings: clientRepository.getSettings,
     getTenantQuota: clientRepository.getTenantQuota,
@@ -27,8 +34,12 @@ export const clientService = {
     listAuditLogs: clientRepository.listAuditLogs,
     findDocumentByIdForTenant: clientRepository.findDocumentByIdForTenant,
     async shareDocument(tenantId, actorUserId, input) {
+        const document = await clientRepository.findDocumentByIdForTenant(input.documentId, tenantId);
+        if (!document) {
+            throw new AppError(404, "Document not found");
+        }
         const share = await clientRepository.createSharedLink(tenantId, {
-            documentId: input.documentId,
+            documentId: document.id,
             expiresAt: input.expiresAt ? new Date(input.expiresAt) : undefined,
             allowDownload: input.allowDownload,
         });
@@ -48,8 +59,93 @@ export const clientService = {
         await auditService.log({ tenantId, actorUserId: userId, action: "document.create", entity: "document", entityId: document.id });
         return document;
     },
+    async archiveDocument(tenantId, actorUserId, documentId) {
+        const document = await clientRepository.findDocumentByIdForTenant(documentId, tenantId);
+        if (!document)
+            throw new AppError(404, "Document not found");
+        await clientRepository.archiveDocument(tenantId, documentId);
+        await auditService.log({ tenantId, actorUserId, action: "document.archive", entity: "document", entityId: documentId });
+        return { archived: true };
+    },
+    async restoreDocument(tenantId, actorUserId, documentId) {
+        const document = await clientRepository.findDocumentByIdForTenant(documentId, tenantId);
+        if (!document)
+            throw new AppError(404, "Document not found");
+        await clientRepository.restoreDocument(tenantId, documentId);
+        await auditService.log({ tenantId, actorUserId, action: "document.restore", entity: "document", entityId: documentId });
+        return { restored: true };
+    },
+    async markAllNotificationsRead(tenantId, userId) {
+        const result = await clientRepository.markAllNotificationsRead(tenantId, userId);
+        return { marked: result.count };
+    },
+    async deleteDocument(tenantId, actorUserId, documentId) {
+        const document = await clientRepository.findDocumentByIdForTenant(documentId, tenantId);
+        if (!document) {
+            throw new AppError(404, "Document not found");
+        }
+        await clientRepository.deleteDocument(tenantId, documentId);
+        await storageService.delete(document.storageKey);
+        const deltaMb = Math.max(1, Math.ceil(Number(document.sizeBytes) / (1024 * 1024)));
+        const quota = await clientRepository.getTenantQuota(tenantId);
+        if (quota && quota.storageUsedMb > 0) {
+            await clientRepository.decrementQuotaUsage(tenantId, Math.min(deltaMb, quota.storageUsedMb));
+        }
+        await auditService.log({ tenantId, actorUserId, action: "document.delete", entity: "document", entityId: documentId });
+        return { deleted: true };
+    },
+    async renameDocument(tenantId, actorUserId, documentId, name) {
+        const document = await clientRepository.findDocumentByIdForTenant(documentId, tenantId);
+        if (!document) {
+            throw new AppError(404, "Document not found");
+        }
+        await clientRepository.renameDocument(tenantId, documentId, name);
+        await auditService.log({ tenantId, actorUserId, action: "document.rename", entity: "document", entityId: documentId });
+        return { ...document, name };
+    },
+    async resolveSharedLink(token) {
+        const link = await clientRepository.findSharedLinkByToken(token);
+        if (!link)
+            throw new AppError(404, "Shared link not found");
+        if (link.expiresAt && link.expiresAt < new Date()) {
+            throw new AppError(410, "Shared link has expired");
+        }
+        return {
+            token: link.token,
+            allowDownload: link.allowDownload,
+            expiresAt: link.expiresAt,
+            document: {
+                id: link.document.id,
+                name: link.document.name,
+                mimeType: link.document.mimeType,
+                sizeBytes: String(link.document.sizeBytes),
+                createdAt: link.document.createdAt,
+            },
+        };
+    },
+    async getSharedLinkForDownload(token) {
+        const link = await clientRepository.findSharedLinkByToken(token);
+        if (!link)
+            throw new AppError(404, "Shared link not found");
+        if (link.expiresAt && link.expiresAt < new Date()) {
+            throw new AppError(410, "Shared link has expired");
+        }
+        return { document: link.document, allowDownload: link.allowDownload };
+    },
     async favoriteDocument(tenantId, userId, documentId) {
-        return clientRepository.addFavorite(tenantId, userId, documentId);
+        const document = await clientRepository.findDocumentByIdForTenant(documentId, tenantId);
+        if (!document) {
+            throw new AppError(404, "Document not found");
+        }
+        return clientRepository.addFavorite(tenantId, userId, document.id);
+    },
+    async unfavoriteDocument(tenantId, userId, documentId) {
+        const document = await clientRepository.findDocumentByIdForTenant(documentId, tenantId);
+        if (!document) {
+            throw new AppError(404, "Document not found");
+        }
+        await clientRepository.removeFavorite(tenantId, userId, document.id);
+        return { removed: true };
     },
     async createWorkflow(tenantId, actorUserId, input) {
         const workflow = await clientRepository.createWorkflow(tenantId, input);
@@ -80,9 +176,44 @@ export const clientService = {
         await auditService.log({ tenantId, actorUserId, action: "api_key.create", entity: "api_key", entityId: apiKey.id });
         return { ...apiKey, rawKey };
     },
-    async updateProfileSecurity(userId, tenantId, input) {
-        const security = await clientRepository.updateProfileSecurity(userId, input);
-        await auditService.log({ tenantId, actorUserId: userId, action: "profile.security.update", entity: "user_security", entityId: security.id });
-        return security;
+    async deleteApiKey(tenantId, actorUserId, apiKeyId) {
+        const result = await clientRepository.deleteApiKey(tenantId, apiKeyId);
+        if (result.count === 0) {
+            throw new AppError(404, "API key not found");
+        }
+        await auditService.log({ tenantId, actorUserId, action: "api_key.delete", entity: "api_key", entityId: apiKeyId });
+        return { deleted: true };
+    },
+    async renameFolder(tenantId, actorUserId, folderId, name) {
+        const result = await clientRepository.renameFolder(tenantId, folderId, name);
+        if (result.count === 0)
+            throw new AppError(404, "Folder not found");
+        await auditService.log({ tenantId, actorUserId, action: "folder.rename", entity: "folder", entityId: folderId });
+        return { id: folderId, name };
+    },
+    async deleteFolder(tenantId, actorUserId, folderId) {
+        try {
+            const result = await clientRepository.deleteFolder(tenantId, folderId);
+            if (!result.deleted)
+                throw new AppError(404, "Folder not found");
+        }
+        catch (err) {
+            if (err instanceof Error && err.message === "FOLDER_HAS_CHILDREN") {
+                throw new AppError(409, "Folder has subfolders; remove them first");
+            }
+            if (err instanceof Error && err.message === "FOLDER_HAS_DOCUMENTS") {
+                throw new AppError(409, "Folder has documents; move or delete them first");
+            }
+            throw err;
+        }
+        await auditService.log({ tenantId, actorUserId, action: "folder.delete", entity: "folder", entityId: folderId });
+        return { deleted: true };
+    },
+    async revokeSharedLink(tenantId, actorUserId, linkId) {
+        const result = await clientRepository.deleteSharedLink(tenantId, linkId);
+        if (result.count === 0)
+            throw new AppError(404, "Shared link not found");
+        await auditService.log({ tenantId, actorUserId, action: "document.share.revoke", entity: "shared_link", entityId: linkId });
+        return { revoked: true };
     },
 };

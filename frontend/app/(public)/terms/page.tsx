@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { COMPANY_CONTACT } from '@/lib/company-contact'
 
 export const metadata = {
   title: 'Terms of Service | Tensae DMS',
@@ -101,8 +102,8 @@ export default function TermsPage() {
         <h2>10. Contact</h2>
         <p>
           Questions about these Terms:{' '}
-          <a href="mailto:legal@tensaedms.com" className="text-primary">
-            legal@tensaedms.com
+          <a href={COMPANY_CONTACT.emailHref} className="text-primary">
+            {COMPANY_CONTACT.email}
           </a>{' '}
           or via our{' '}
           <Link href="/contact" className="text-primary">

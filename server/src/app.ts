@@ -18,6 +18,7 @@ import { authRoutes } from "./modules/auth/auth.routes.js";
 import { rbacRoutes } from "./modules/rbac/rbac.routes.js";
 import { clientRoutes } from "./modules/client/client.routes.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
+import { publicRoutes } from "./modules/public/public.routes.js";
 
 installBigIntJson();
 
@@ -44,6 +45,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/rbac", rbacRoutes);
 app.use("/api/v1/client", clientRoutes);
 app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/public", publicRoutes);
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use(errorMiddleware);

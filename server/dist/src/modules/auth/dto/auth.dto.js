@@ -32,3 +32,9 @@ export const recoveryCodeLoginSchema = z.object({
     email: z.string().email(),
     recoveryCode: z.string().min(8),
 });
+export const acceptInviteSchema = z.object({
+    token: z.string().min(20),
+    email: z.string().email(),
+    fullName: z.string().min(2),
+    password: z.string().min(8),
+});

@@ -14,7 +14,11 @@ const envSchema = z
     SMTP_SECURE: z.coerce.boolean().optional(),
     SMTP_USER: z.string().email().optional(),
     SMTP_PASS: z.string().min(1).optional(),
+    /** Alias for SMTP_PASS (matches Tensae Verify env naming). */
+    SMTP_PASSWORD: z.string().min(1).optional(),
     SMTP_FROM: z.string().min(1).optional(),
+    /** Inbox for public contact form submissions. */
+    CONTACT_INQUIRY_TO: z.string().email().optional(),
     /** Browser-facing app origin (invite/reset/share links). e.g. http://localhost:3000 or http://YOUR_VPS_IP */
     PUBLIC_APP_BASE_URL: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.string().url().optional()),
     /** Public API origin without path (signed download URLs). e.g. http://localhost:4000 or http://YOUR_VPS_IP */
@@ -64,7 +68,9 @@ export const env = {
   COOKIE_SECURE: base.COOKIE_SECURE ?? base.NODE_ENV === "production",
   COOKIE_SAME_SITE: base.COOKIE_SAME_SITE,
   REFRESH_COOKIE_MAX_AGE_MS: base.REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000,
+  SMTP_PASS: base.SMTP_PASS ?? base.SMTP_PASSWORD,
   SMTP_SECURE: base.SMTP_SECURE ?? false,
+  CONTACT_INQUIRY_TO: base.CONTACT_INQUIRY_TO ?? "info@tensaedev.com",
   /** Normalized origin list for CORS */
   CORS_ORIGINS: (() => {
     const list = base.CORS_ORIGIN.split(",")

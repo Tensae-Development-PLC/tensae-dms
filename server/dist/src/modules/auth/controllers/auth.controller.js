@@ -1,4 +1,4 @@
-import { forgotPasswordSchema, loginSchema, recoveryCodeLoginSchema, registerSchema, resetPasswordSchema, setupTwoFactorSchema, verifyTwoFactorSchema } from "../dto/auth.dto.js";
+import { forgotPasswordSchema, loginSchema, recoveryCodeLoginSchema, registerSchema, resetPasswordSchema, setupTwoFactorSchema, verifyTwoFactorSchema, acceptInviteSchema } from "../dto/auth.dto.js";
 import { authService } from "../services/auth.service.js";
 import { auditService } from "../../audit/services/audit.service.js";
 import { env } from "../../../config/env.js";
@@ -89,5 +89,16 @@ export const authController = {
         const tokens = await authService.loginWithRecoveryCode(dto);
         res.cookie(env.REFRESH_COOKIE_NAME, tokens.refreshToken, tenantRefreshCookieOptions());
         res.status(200).json({ accessToken: tokens.accessToken });
+    },
+    async acceptInvite(req, res) {
+        const dto = acceptInviteSchema.parse(req.body);
+        const result = await authService.acceptInvite(dto);
+        res.cookie(env.REFRESH_COOKIE_NAME, result.refreshToken, tenantRefreshCookieOptions());
+        res.status(201).json({
+            userId: result.userId,
+            tenantId: result.tenantId,
+            roleId: result.roleId,
+            accessToken: result.accessToken,
+        });
     },
 };

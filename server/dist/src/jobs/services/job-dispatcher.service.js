@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { queues } from "../queues/queue-registry.js";
 function idempotencyJobId(queueName, payload) {
     const digest = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-    return `${queueName}:${digest}`;
+    // BullMQ rejects job ids containing ':' in some environments/platforms.
+    // Use a safe separator '__' to keep ids readable and unique.
+    return `${queueName}__${digest}`;
 }
 export const jobDispatcher = {
     enqueueEmail(payload) {

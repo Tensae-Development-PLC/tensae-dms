@@ -42,6 +42,40 @@ export function inviteEmailTemplate(input: {
   return { subject, text, html };
 }
 
+export function contactInquiryTemplate(input: {
+  name: string;
+  email: string;
+  company?: string;
+  service?: string;
+  message: string;
+}) {
+  const subject = `DMS contact inquiry from ${input.name}`;
+  const lines = [
+    `Name: ${input.name}`,
+    `Email: ${input.email}`,
+    input.company ? `Company: ${input.company}` : null,
+    input.service ? `Area of interest: ${input.service}` : null,
+    "",
+    "Message:",
+    input.message,
+  ].filter((line) => line !== null);
+
+  const text = lines.join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827">
+      <h2 style="margin:0 0 16px">New Tensae DMS contact inquiry</h2>
+      <p style="margin:0 0 8px"><strong>Name:</strong> ${escapeHtml(input.name)}</p>
+      <p style="margin:0 0 8px"><strong>Email:</strong> <a href="mailto:${escapeHtml(input.email)}">${escapeHtml(input.email)}</a></p>
+      ${input.company ? `<p style="margin:0 0 8px"><strong>Company:</strong> ${escapeHtml(input.company)}</p>` : ""}
+      ${input.service ? `<p style="margin:0 0 8px"><strong>Area of interest:</strong> ${escapeHtml(input.service)}</p>` : ""}
+      <p style="margin:16px 0 8px"><strong>Message</strong></p>
+      <p style="margin:0;white-space:pre-wrap">${escapeHtml(input.message)}</p>
+    </div>
+  `;
+
+  return { subject, text, html };
+}
+
 export function passwordResetTemplate(input: { appName: string; resetUrl: string }) {
   const subject = `Reset your ${input.appName} password`;
   const text = `Reset your password here: ${input.resetUrl}`;

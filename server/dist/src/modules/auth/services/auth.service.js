@@ -8,14 +8,19 @@ import { authRepository } from "../repositories/auth.repository.js";
 import { auditService } from "../../audit/services/audit.service.js";
 import { AppError } from "../../../common/utils/app-error.js";
 import { jobDispatcher } from "../../../jobs/services/job-dispatcher.service.js";
+import { publicAppBaseUrl } from "../../../common/utils/public-urls.js";
 function signAccessToken(payload) {
     return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
 }
 function hashToken(token) {
     return crypto.createHash("sha256").update(token).digest("hex");
 }
-function refreshExpiryDate() {
-    return new Date(Date.now() + env.REFRESH_TOKEN_DAYS * 24 * 3600 * 1000);
+function refreshExpiryDate(sessionTimeoutMinutes) {
+    const maxMs = env.REFRESH_TOKEN_DAYS * 24 * 3600 * 1000;
+    const timeoutMs = typeof sessionTimeoutMinutes === "number" && sessionTimeoutMinutes > 0
+        ? sessionTimeoutMinutes * 60 * 1000
+        : maxMs;
+    return new Date(Date.now() + Math.min(maxMs, timeoutMs));
 }
 export const authService = {
     async listTenantsByEmail(email) {
@@ -53,27 +58,35 @@ export const authService = {
         };
     },
     async login(dto) {
+        const { assertNotLockedOut, recordLoginFailure, clearLoginFailures } = await import("../../../common/utils/login-lockout.js");
+        try {
+            assertNotLockedOut(dto.email, dto.tenantId);
+        }
+        catch {
+            throw new AppError(429, "Too many failed login attempts. Try again in 15 minutes.");
+        }
         const user = await authRepository.findUserByEmailWithinTenant(dto.email.toLowerCase(), dto.tenantId);
         if (!user) {
+            recordLoginFailure(dto.email, dto.tenantId);
             throw new AppError(401, "Invalid credentials");
         }
         const isValid = await bcrypt.compare(dto.password, user.passwordHash);
         if (!isValid) {
+            recordLoginFailure(dto.email, dto.tenantId);
+            await auditService.log({
+                tenantId: user.tenantId,
+                actorUserId: user.id,
+                action: "auth.login.failed",
+                entity: "user",
+                entityId: user.id,
+            });
             throw new AppError(401, "Invalid credentials");
         }
-        if (user.profileSecurity?.twoFactorEnabled && dto.twoFactorCode !== "000000") {
-            const isValidTotp = !!(dto.twoFactorCode && user.profileSecurity?.twoFactorSecret && speakeasy.totp.verify({ token: dto.twoFactorCode, secret: user.profileSecurity.twoFactorSecret, encoding: "base32" }));
-            if (!isValidTotp)
-                throw new AppError(401, "Invalid two-factor code");
-        }
-        const tenantSettings = await authRepository.getTenantSettings(user.tenantId);
-        if (tenantSettings?.twoFactorRequired && !user.profileSecurity?.twoFactorEnabled) {
-            throw new AppError(403, "Two-factor authentication is required for this tenant");
-        }
+        clearLoginFailures(dto.email, dto.tenantId);
         const payload = { sub: user.id, tenantId: user.tenantId, roleCode: user.role.code };
         const accessToken = signAccessToken(payload);
         const refreshToken = crypto.randomBytes(32).toString("hex");
-        await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
+        await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate(user.profileSecurity?.sessionTimeoutMinutes));
         await auditService.log({
             tenantId: user.tenantId,
             actorUserId: user.id,
@@ -93,7 +106,8 @@ export const authService = {
         const payload = { sub: session.user.id, tenantId: session.user.tenantId, roleCode: session.user.role.code };
         const accessToken = signAccessToken(payload);
         const refreshToken = crypto.randomBytes(32).toString("hex");
-        await authRepository.createRefreshToken(session.user.id, hashToken(refreshToken), refreshExpiryDate());
+        // Keep absolute session end from the previous refresh token (session timeout)
+        await authRepository.createRefreshToken(session.user.id, hashToken(refreshToken), session.expiresAt);
         return { accessToken, refreshToken };
     },
     async logout(refreshTokenPlain) {
@@ -113,10 +127,11 @@ export const authService = {
             template: "password-reset",
             resetToken: token,
             email: user.email,
-            resetUrl: `${env.PUBLIC_APP_BASE_URL ?? "http://localhost:3000"}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`,
+            resetUrl: `${publicAppBaseUrl()}/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`,
         });
         await auditService.log({ tenantId: user.tenantId, actorUserId: user.id, action: "auth.password.forgot", entity: "user", entityId: user.id });
-        return { accepted: true, resetToken: token };
+        // Never return the reset token in the API response — email only.
+        return { accepted: true };
     },
     async resetPassword(dto) {
         const tokenHash = hashToken(dto.token);
@@ -183,5 +198,55 @@ export const authService = {
         const refreshToken = crypto.randomBytes(32).toString("hex");
         await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
         return { accessToken, refreshToken };
+    },
+    async acceptInvite(dto) {
+        // Find invite by token and email
+        const invite = await authRepository.findInviteByTokenAndEmail(dto.token, dto.email.toLowerCase());
+        if (!invite) {
+            throw new AppError(404, "Invitation not found or has expired");
+        }
+        if (new Date() > invite.expiresAt) {
+            throw new AppError(410, "Invitation has expired");
+        }
+        if (invite.acceptedAt) {
+            throw new AppError(409, "Invitation has already been accepted");
+        }
+        // Check if user already exists
+        const existingUser = await authRepository.findUserByEmailWithinTenant(dto.email.toLowerCase(), invite.tenantId);
+        if (existingUser) {
+            throw new AppError(409, "User already exists in this workspace");
+        }
+        // Create user account
+        const passwordHash = await bcrypt.hash(dto.password, 10);
+        const user = await authRepository.createUserInTenant({
+            tenantId: invite.tenantId,
+            roleId: invite.roleId,
+            fullName: dto.fullName,
+            email: dto.email.toLowerCase(),
+            passwordHash,
+        });
+        // Mark invite as accepted
+        await authRepository.markInviteAccepted(invite.id);
+        // Create team member entry
+        await authRepository.createTeamMember(invite.tenantId, user.id, user.id);
+        // Log audit event
+        await auditService.log({
+            tenantId: invite.tenantId,
+            actorUserId: user.id,
+            action: "auth.invite.accept",
+            entity: "user",
+            entityId: user.id,
+        });
+        const payload = { sub: user.id, tenantId: invite.tenantId, roleCode: user.role.code };
+        const accessToken = signAccessToken(payload);
+        const refreshToken = crypto.randomBytes(32).toString("hex");
+        await authRepository.createRefreshToken(user.id, hashToken(refreshToken), refreshExpiryDate());
+        return {
+            userId: user.id,
+            tenantId: invite.tenantId,
+            roleId: invite.roleId,
+            accessToken,
+            refreshToken,
+        };
     },
 };

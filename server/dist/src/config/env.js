@@ -13,8 +13,15 @@ const envSchema = z
     SMTP_SECURE: z.coerce.boolean().optional(),
     SMTP_USER: z.string().email().optional(),
     SMTP_PASS: z.string().min(1).optional(),
+    /** Alias for SMTP_PASS (matches Tensae Verify env naming). */
+    SMTP_PASSWORD: z.string().min(1).optional(),
     SMTP_FROM: z.string().min(1).optional(),
+    /** Inbox for public contact form submissions. */
+    CONTACT_INQUIRY_TO: z.string().email().optional(),
+    /** Browser-facing app origin (invite/reset/share links). e.g. http://localhost:3000 or http://YOUR_VPS_IP */
     PUBLIC_APP_BASE_URL: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.string().url().optional()),
+    /** Public API origin without path (signed download URLs). e.g. http://localhost:4000 or http://YOUR_VPS_IP */
+    PUBLIC_API_BASE_URL: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.string().url().optional()),
     /** Comma-separated list of allowed browser origins (e.g. https://app.example.com,http://localhost:3000) */
     CORS_ORIGIN: z.string().default("http://localhost:3000"),
     REDIS_URL: z.string().default("redis://127.0.0.1:6379"),
@@ -22,8 +29,11 @@ const envSchema = z
     GLOBAL_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(500),
     GLOBAL_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
     SLOW_QUERY_THRESHOLD_MS: z.coerce.number().int().positive().default(300),
+    /** Local VPS disk only — S3 is not supported */
     STORAGE_DRIVER: z.enum(["local"]).default("local"),
     STORAGE_LOCAL_ROOT: z.string().default("./storage-data"),
+    /** When false, subscriptions/billing UI is disabled (free tier). Default off for V1. */
+    BILLING_ENABLED: z.coerce.boolean().default(false),
     REFRESH_COOKIE_NAME: z.string().min(1).default("dms_refresh"),
     ADMIN_REFRESH_COOKIE_NAME: z.string().min(1).default("dms_admin_refresh"),
     /** Defaults to true when NODE_ENV is production */
@@ -53,7 +63,9 @@ export const env = {
     COOKIE_SECURE: base.COOKIE_SECURE ?? base.NODE_ENV === "production",
     COOKIE_SAME_SITE: base.COOKIE_SAME_SITE,
     REFRESH_COOKIE_MAX_AGE_MS: base.REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000,
+    SMTP_PASS: base.SMTP_PASS ?? base.SMTP_PASSWORD,
     SMTP_SECURE: base.SMTP_SECURE ?? false,
+    CONTACT_INQUIRY_TO: base.CONTACT_INQUIRY_TO ?? "info@tensaedev.com",
     /** Normalized origin list for CORS */
     CORS_ORIGINS: (() => {
         const list = base.CORS_ORIGIN.split(",")
